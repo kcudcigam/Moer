@@ -39,8 +39,8 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "experiment", "run", "method", "spp", "render_seconds",
-        "query_count", "training_samples", "residual_samples", "nrc_query_seconds",
-        "nrc_train_seconds", "target_trace_seconds",
+        "query_count", "training_samples", "residual_samples", "train_calls",
+        "nrc_query_seconds", "nrc_train_seconds", "target_trace_seconds",
         "mse", "mae", "psnr", "image"
     ]
     with args.output.open("w", newline="") as file:
@@ -50,8 +50,8 @@ def main():
 
     markdown_path = args.output.with_suffix(".md")
     with markdown_path.open("w") as file:
-        file.write("| experiment | method | spp | seconds | queries | train_samples | residual_samples | query_s | train_s | target_s | mse | mae | psnr |\n")
-        file.write("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+        file.write("| experiment | method | spp | seconds | queries | train_samples | residual_samples | train_calls | query_s | train_s | target_s | mse | mae | psnr |\n")
+        file.write("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
         for row in rows:
             file.write(
                 f"| {row['experiment']} | {row['method']} | {row['spp']} | "
@@ -59,6 +59,7 @@ def main():
                 f"{row.get('query_count', 0)} | "
                 f"{row.get('training_samples', 0)} | "
                 f"{row.get('residual_samples', 0)} | "
+                f"{row.get('train_calls', 0)} | "
                 f"{float(row.get('nrc_query_seconds', 0)):.6f} | "
                 f"{float(row.get('nrc_train_seconds', 0)):.6f} | "
                 f"{float(row.get('target_trace_seconds', 0)):.6f} | "

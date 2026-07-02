@@ -1,11 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include "FunctionLayer/Integrator/Nrc/ContinuationEstimator.h"
 #include "FunctionLayer/Integrator/Nrc/NrcSettings.h"
 #include "FunctionLayer/Integrator/Nrc/NrcStats.h"
-#include "FunctionLayer/Integrator/Nrc/RunningAverageRadianceCache.h"
 #include "FunctionLayer/Integrator/PathIntegrator-new.h"
 
 class NrcPathIntegrator : public PathIntegratorNew {
@@ -34,8 +34,10 @@ private:
     std::shared_ptr<ResidualCorrector> residualCorrector;
     std::unique_ptr<ContinuationEstimator> continuationEstimator;
     NrcStats stats;
+    std::atomic<int> pendingTrainingSamples{0};
 
     bool shouldUseContinuationEstimator(int bounce) const;
+    bool shouldTrainCache();
     Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene);
     Spectrum LiInternal(const Ray &initialRay,
                         std::shared_ptr<Scene> scene,

@@ -2,6 +2,10 @@ set(TARGET_NAME Moer)
 
 file(GLOB_RECURSE ALL_INCLUDE CONFIGURE_DEPENDS "*.h")
 file(GLOB_RECURSE ALL_SOURCES CONFIGURE_DEPENDS "*.cpp")
+if(ENABLE_TCNN_NRC)
+    file(GLOB_RECURSE ALL_CUDA_SOURCES CONFIGURE_DEPENDS "*.cu")
+    list(APPEND ALL_SOURCES ${ALL_CUDA_SOURCES})
+endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ALL_INCLUDE} ${ALL_SOURCES})
 
@@ -40,6 +44,12 @@ endif()
 
 if(ENABLE_GPISMEDIUM)
     target_compile_definitions(${TARGET_NAME} PRIVATE ENABLE_GPISMEDIUM)
+endif()
+
+if(ENABLE_TCNN_NRC)
+    target_compile_definitions(${TARGET_NAME} PRIVATE ENABLE_TCNN_NRC)
+    target_link_libraries(${TARGET_NAME} PUBLIC tiny-cuda-nn)
+    set_source_files_properties(${ALL_CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
 endif()
 
 target_compile_definitions(${TARGET_NAME} PRIVATE CMAKE_DEF_SPECTRUM_SAMPLES=60)

@@ -1,40 +1,68 @@
 # TCNN Integration Notes
 
-The current experiment branch uses `RunningAverageRadianceCache` as a CPU cache backend to validate the NRC data flow.
-This is not the final high-performance NRC backend.
+This branch contains a working tiny-cuda-nn backend for the Neural Radiance Cache experiment path.
 
-## Local feasibility check
+## Build
 
-Detected on this machine:
+The TCNN backend is optional and is enabled with `ENABLE_TCNN_NRC`.
+On this Windows machine the reliable configuration is NMake from the Visual Studio developer environment:
 
-- CUDA: 12.6
-- GPU: NVIDIA GeForce RTX 3060, 12 GB
-- Current successful Moer build: MinGW Makefiles
-- MSVC `cl.exe`: not found in the active shell
+```powershell
+& cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && cmake -S . -B build-tcnn -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DENABLE_TCNN_NRC=ON -DCMAKE_CUDA_COMPILER="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/bin/nvcc.exe" -DCMAKE_CUDA_ARCHITECTURES=86'
+& cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && cmake --build build-tcnn --config Release'
+```
 
-This means TCNN is feasible at the hardware/CUDA level, but it should be integrated through a Visual Studio/MSVC CUDA build environment rather than the current MinGW build.
+Verified environment:
 
-## Intended backend
+- CUDA 12.6
+- NVIDIA GeForce RTX 3060, 12 GB
+- tiny-cuda-nn commit `749dd70c5afc5a9dadb85e5652ed65d55e0ba187`
 
-Add `TcnnRadianceCache : INeuralRadianceCache` with the same public API already used by `NrcPathIntegrator`.
-The backend should replace `RunningAverageRadianceCache` without changing integrator control flow.
+## Configuration
 
-Required implementation:
+Use the backend from scene JSON or an experiment matrix:
 
-- Convert `RadianceQuery` to a flat feature vector.
-- Batch `queryBatch()` calls instead of per-hit network calls.
-- Batch upload `RadianceSample` targets.
-- Train an MLP with encoded position/direction/material features.
-- Use clamped or log-radiance RGB loss.
-- Report `nrc_query_time` and `nrc_train_time`.
+```json
+{
+  "renderer": {
+    "integrator": "nrc_path",
+    "nrc": {
+      "mode": "nrc",
+      "backend": "tcnn",
+      "query_bounce": 1,
+      "train_steps": 1,
+      "train_batch_size": 256,
+      "max_training_samples": 16384
+    }
+  }
+}
+```
 
-## Current experimental limitation
+`backend = "cpu"` keeps the running-average validation backend. `backend = "tcnn"` creates `TcnnRadianceCache`.
 
-The generated experiment results compare:
+## Implementation
 
-- low-spp path tracing,
-- high-spp reference,
-- NRC control flow with a CPU running-average cache,
-- two-level residual hook with a global residual corrector.
+The TCNN cache currently maps a `RadianceQuery` to 12 scalar features:
 
-They prove the Moer-side NRC experiment framework and data path, but they are not final TCNN performance results.
+- position
+- surface normal
+- outgoing direction
+- roughness
+- material type
+- bounce index
+
+The network predicts RGB continuation radiance. Training targets are produced by the same continuation path used by the CPU NRC framework.
+
+Current speed-oriented changes:
+
+- TCNN is isolated behind `INeuralRadianceCache`.
+- TCNN is created through `RadianceCacheFactory`.
+- Training is triggered every `train_batch_size` collected samples.
+- Single-query GPU buffers are reused to avoid per-query device allocation.
+- Statistics include `train_calls`, query time, train time, target trace time, sample counts, and residual counts.
+
+## Current limitation
+
+The backend is end-to-end functional, but it is not yet paper-level fast. Moer currently queries the cache one path vertex at a time, so TCNN inference still performs many small synchronized GPU calls. The formal results show this clearly: training calls are batched, but `nrc_query_seconds` dominates TCNN runtime.
+
+The next performance step is to restructure `NrcPathIntegrator` to gather continuation queries across pixels/tiles and call `queryBatch()` once per batch.

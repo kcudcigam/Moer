@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "FastMath.h"
+#include "FunctionLayer/Integrator/Nrc/RadianceCacheFactory.h"
 #include "FunctionLayer/Material/NullMaterial.h"
 
 NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
@@ -19,7 +20,7 @@ NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
                         _spp,
                         _renderThreadNum),
       settings(_settings),
-      radianceCache(std::make_shared<RunningAverageRadianceCache>(_settings.maxTrainingSamples)) {
+      radianceCache(CreateRadianceCache(_settings)) {
     if (settings.mode == NrcMode::Nrc) {
         continuationEstimator = std::make_unique<NrcContinuationEstimator>(radianceCache);
     } else if (settings.mode == NrcMode::TwoLevel) {
@@ -32,6 +33,15 @@ bool NrcPathIntegrator::shouldUseContinuationEstimator(int bounce) const {
     return settings.mode != NrcMode::PathTrace &&
            continuationEstimator != nullptr &&
            bounce >= settings.queryBounce;
+}
+
+bool NrcPathIntegrator::shouldTrainCache() {
+    if (settings.trainStepsPerRender <= 0) {
+        return false;
+    }
+    const int batchSize = std::max(1, settings.trainBatchSize);
+    const int sampleIndex = pendingTrainingSamples.fetch_add(1) + 1;
+    return sampleIndex % batchSize == 0;
 }
 
 Spectrum NrcPathIntegrator::traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene) {
@@ -125,10 +135,12 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                 if (collectTrainingSamples) {
                     radianceCache->enqueueTrainingSamples({trainingSample});
                     stats.addTrainingSample();
-                    auto trainStart = std::chrono::high_resolution_clock::now();
-                    radianceCache->train(settings.trainStepsPerRender);
-                    auto trainEnd = std::chrono::high_resolution_clock::now();
-                    stats.addTraining(std::chrono::duration<double>(trainEnd - trainStart).count());
+                    if (shouldTrainCache()) {
+                        auto trainStart = std::chrono::high_resolution_clock::now();
+                        radianceCache->train(settings.trainStepsPerRender);
+                        auto trainEnd = std::chrono::high_resolution_clock::now();
+                        stats.addTraining(std::chrono::duration<double>(trainEnd - trainStart).count());
+                    }
                 }
             }
 

@@ -1,0 +1,43 @@
+{
+  "name": "smoke_tcnn_matrix",
+  "scene": "scenes/box",
+  "resolution": [96, 54],
+  "methods": [
+    {
+      "name": "path_low",
+      "spp": 1,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "path_reference",
+      "spp": 8,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "nrc_tcnn",
+      "spp": 1,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "nrc",
+          "backend": "tcnn",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "max_training_samples": 4096
+        }
+      }
+    }
+  ]
+}

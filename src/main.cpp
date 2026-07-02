@@ -74,8 +74,8 @@ public:
             integrator.render(scene);
             integrator.save(settings->outputPath);
             std::ofstream statsFile(settings->outputPath + ".stats.csv");
-            statsFile << "query_count,training_samples,residual_samples,nrc_query_seconds,nrc_train_seconds,target_trace_seconds\n";
-            statsFile << "0,0,0,0,0,0\n";
+            statsFile << "query_count,training_samples,residual_samples,train_calls,nrc_query_seconds,nrc_train_seconds,target_trace_seconds\n";
+            statsFile << "0,0,0,0,0,0,0\n";
         }
         std::cout << "finish" << std::endl;
         renderClock.Done();

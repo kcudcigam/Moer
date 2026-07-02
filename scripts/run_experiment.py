@@ -89,6 +89,7 @@ def run_method(root, executable, base_scene, run_dir, experiment, method):
         "query_count": "0",
         "training_samples": "0",
         "residual_samples": "0",
+        "train_calls": "0",
         "nrc_query_seconds": "0",
         "nrc_train_seconds": "0",
         "target_trace_seconds": "0",
@@ -144,8 +145,8 @@ def main():
     with (experiment_dir / "metrics.csv").open("w", newline="") as file:
         fieldnames = [
             "method", "spp", "render_seconds", "image", "mse", "mae", "psnr",
-            "query_count", "training_samples", "residual_samples", "nrc_query_seconds",
-            "nrc_train_seconds", "target_trace_seconds"
+            "query_count", "training_samples", "residual_samples", "train_calls",
+            "nrc_query_seconds", "nrc_train_seconds", "target_trace_seconds"
         ]
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -154,7 +155,7 @@ def main():
     with (experiment_dir / "timing.csv").open("w", newline="") as file:
         fieldnames = [
             "method", "spp", "render_seconds", "query_count", "training_samples",
-            "residual_samples", "nrc_query_seconds", "nrc_train_seconds",
+            "residual_samples", "train_calls", "nrc_query_seconds", "nrc_train_seconds",
             "target_trace_seconds"
         ]
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")

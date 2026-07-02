@@ -1,0 +1,89 @@
+{
+  "name": "teapot_tcnn_matrix",
+  "scene": "scenes/teapot",
+  "resolution": [128, 72],
+  "methods": [
+    {
+      "name": "path_low",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "path_reference",
+      "spp": 16,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "nrc_cpu",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "nrc",
+          "backend": "cpu",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "max_training_samples": 16384
+        }
+      }
+    },
+    {
+      "name": "nrc_tcnn",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "nrc",
+          "backend": "tcnn",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "train_batch_size": 256,
+          "max_training_samples": 16384
+        }
+      }
+    },
+    {
+      "name": "two_level_cpu",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "two_level",
+          "backend": "cpu",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "max_training_samples": 16384,
+          "residual_probability": 0.125
+        }
+      }
+    },
+    {
+      "name": "two_level_tcnn",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "two_level",
+          "backend": "tcnn",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "train_batch_size": 256,
+          "max_training_samples": 16384,
+          "residual_probability": 0.125
+        }
+      }
+    }
+  ]
+}

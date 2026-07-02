@@ -8,9 +8,10 @@ This branch adds the shared integration layer for Neural Radiance Cache experime
 - `renderer.nrc.mode = "path_trace"` keeps full path tracing and is used as a framework baseline.
 - `renderer.nrc.mode = "nrc"` uses the cache continuation estimator after `query_bounce`.
 - `renderer.nrc.mode = "two_level"` routes through the two-level estimator hook.
-- The active cache backend is `RunningAverageRadianceCache`, a CPU backend used to validate Moer-side NRC data flow.
+- `renderer.nrc.backend = "cpu"` uses `RunningAverageRadianceCache`, a CPU backend used to validate Moer-side NRC data flow.
+- `renderer.nrc.backend = "tcnn"` uses the tiny-cuda-nn backend when Moer is built with `ENABLE_TCNN_NRC=ON`.
 - `renderer.nrc.mode = "two_level"` records residual samples and applies a global residual correction hook.
-- TCNN is not implemented in this branch; see `docs/tcnn-integration.md`.
+- TCNN build and runtime details are in `docs/tcnn-integration.md`.
 
 ## Scene configuration
 
@@ -27,7 +28,10 @@ Example:
     "output_file": "results/nrc_dummy.png",
     "nrc": {
       "mode": "nrc",
-      "query_bounce": 2
+      "backend": "tcnn",
+      "query_bounce": 2,
+      "train_steps": 1,
+      "train_batch_size": 256
     }
   }
 }
