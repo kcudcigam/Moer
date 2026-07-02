@@ -4,6 +4,7 @@
 
 #include "FunctionLayer/Integrator/Nrc/ContinuationEstimator.h"
 #include "FunctionLayer/Integrator/Nrc/NrcSettings.h"
+#include "FunctionLayer/Integrator/Nrc/NrcStats.h"
 #include "FunctionLayer/Integrator/Nrc/RunningAverageRadianceCache.h"
 #include "FunctionLayer/Integrator/PathIntegrator-new.h"
 
@@ -23,11 +24,16 @@ public:
         return radianceCache;
     }
 
+    void writeStats(const std::string &path) const {
+        stats.writeCsv(path);
+    }
+
 private:
     NrcSettings settings;
     std::shared_ptr<INeuralRadianceCache> radianceCache;
     std::shared_ptr<ResidualCorrector> residualCorrector;
     std::unique_ptr<ContinuationEstimator> continuationEstimator;
+    NrcStats stats;
 
     bool shouldUseContinuationEstimator(int bounce) const;
     Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene);

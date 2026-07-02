@@ -1,5 +1,7 @@
 #include "NrcPathIntegrator.h"
 
+#include <chrono>
+
 #include "FastMath.h"
 #include "FunctionLayer/Material/NullMaterial.h"
 
@@ -111,7 +113,10 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
                 Ray continuationRay{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
                 Spectrum continuationThroughput = sampleScatterRecord.f / sampleScatterRecord.pdf;
+                auto targetStart = std::chrono::high_resolution_clock::now();
                 targetRadiance = continuationThroughput * traceContinuation(continuationRay, scene);
+                auto targetEnd = std::chrono::high_resolution_clock::now();
+                stats.addTargetTrace(std::chrono::duration<double>(targetEnd - targetStart).count());
 
                 RadianceSample trainingSample;
                 trainingSample.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
@@ -119,11 +124,30 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                 trainingSample.weight = 1.0;
                 if (collectTrainingSamples) {
                     radianceCache->enqueueTrainingSamples({trainingSample});
+                    stats.addTrainingSample();
+                    auto trainStart = std::chrono::high_resolution_clock::now();
                     radianceCache->train(settings.trainStepsPerRender);
+                    auto trainEnd = std::chrono::high_resolution_clock::now();
+                    stats.addTraining(std::chrono::duration<double>(trainEnd - trainStart).count());
                 }
             }
 
-            L += throughput * continuationEstimator->estimate(context);
+            auto queryStart = std::chrono::high_resolution_clock::now();
+            Spectrum cachedRadiance = continuationEstimator->estimate(context);
+            auto queryEnd = std::chrono::high_resolution_clock::now();
+            stats.addQuery(std::chrono::duration<double>(queryEnd - queryStart).count());
+
+            if (collectTrainingSamples && residualCorrector) {
+                ResidualSample residualSample;
+                residualSample.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
+                residualSample.prediction = cachedRadiance;
+                residualSample.pathTraceTarget = targetRadiance;
+                residualSample.weight = 1.0;
+                residualCorrector->enqueue(residualSample);
+                stats.addResidualSample();
+            }
+
+            L += throughput * cachedRadiance;
             break;
         }
 

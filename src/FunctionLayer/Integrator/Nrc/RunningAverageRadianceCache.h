@@ -14,6 +14,8 @@ public:
     void reset() override {
         std::lock_guard<std::mutex> lock(mutex);
         sampleBuffer.clear();
+        weightedSum = Spectrum(0.0);
+        weightSum = 0.0;
         averageRadiance = Spectrum(0.0);
         hasAverage = false;
     }
@@ -21,27 +23,20 @@ public:
     void enqueueTrainingSamples(const std::vector<RadianceSample> &samples) override {
         std::lock_guard<std::mutex> lock(mutex);
         sampleBuffer.pushBatch(samples);
+        for (const auto &sample : samples) {
+            double weight = sample.weight > 0.0 ? sample.weight : 1.0;
+            weightedSum += sample.target * weight;
+            weightSum += weight;
+        }
     }
 
     void train(int) override {
         std::lock_guard<std::mutex> lock(mutex);
-        auto samples = sampleBuffer.snapshot();
-        if (samples.empty()) {
+        if (weightSum <= 0.0) {
             return;
         }
-
-        Spectrum sum(0.0);
-        double weightSum = 0.0;
-        for (const auto &sample : samples) {
-            double weight = sample.weight > 0.0 ? sample.weight : 1.0;
-            sum += sample.target * weight;
-            weightSum += weight;
-        }
-
-        if (weightSum > 0.0) {
-            averageRadiance = sum / weightSum;
-            hasAverage = true;
-        }
+        averageRadiance = weightedSum / weightSum;
+        hasAverage = true;
     }
 
     Spectrum query(const RadianceQuery &) const override {
@@ -56,6 +51,8 @@ public:
 
 private:
     NrcSampleBuffer sampleBuffer;
+    Spectrum weightedSum{0.0};
+    double weightSum = 0.0;
     Spectrum averageRadiance{0.0};
     bool hasAverage = false;
     mutable std::mutex mutex;

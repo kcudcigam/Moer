@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 
 #include "FunctionLayer/Integrator/PathIntegrator-new.h"
 #include "FunctionLayer/Integrator/NrcPathIntegrator.h"
@@ -64,6 +65,7 @@ public:
                                          settings->spp, settings->nrcSettings, 12);
             integrator.render(scene);
             integrator.save(settings->outputPath);
+            integrator.writeStats(settings->outputPath + ".stats.csv");
         } else {
             VolPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
                                          std::make_unique<SequenceTileGenerator>(resolution),
@@ -71,6 +73,9 @@ public:
                                          settings->spp, 12);
             integrator.render(scene);
             integrator.save(settings->outputPath);
+            std::ofstream statsFile(settings->outputPath + ".stats.csv");
+            statsFile << "query_count,training_samples,residual_samples,nrc_query_seconds,nrc_train_seconds,target_trace_seconds\n";
+            statsFile << "0,0,0,0,0,0\n";
         }
         std::cout << "finish" << std::endl;
         renderClock.Done();

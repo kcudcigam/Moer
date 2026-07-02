@@ -53,22 +53,18 @@ public:
 
     void enqueue(const ResidualSample &sample) {
         residualBuffer.push(sample);
+        double weight = sample.weight > 0.0 ? sample.weight : 1.0;
+        std::lock_guard<std::mutex> lock(mutex);
+        weightedResidualSum += sample.residual() * weight;
+        weightSum += weight;
     }
 
     Spectrum estimateGlobalResidual() const {
-        auto samples = residualBuffer.snapshot();
-        if (samples.empty()) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (weightSum <= 0.0) {
             return Spectrum(0.0);
         }
-
-        Spectrum sum(0.0);
-        double weightSum = 0.0;
-        for (const auto &sample : samples) {
-            double weight = sample.weight > 0.0 ? sample.weight : 1.0;
-            sum += sample.residual() * weight;
-            weightSum += weight;
-        }
-        return weightSum > 0.0 ? sum / weightSum : Spectrum(0.0);
+        return weightedResidualSum / weightSum;
     }
 
     size_t sampleCount() const {
@@ -77,4 +73,7 @@ public:
 
 private:
     ResidualBuffer residualBuffer;
+    mutable std::mutex mutex;
+    Spectrum weightedResidualSum{0.0};
+    double weightSum = 0.0;
 };

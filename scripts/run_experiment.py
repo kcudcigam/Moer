@@ -84,12 +84,29 @@ def run_method(root, executable, base_scene, run_dir, experiment, method):
     else:
         raise FileNotFoundError(f"missing render output: {image_path}")
 
-    return {
+    stats_path = Path(renderer["output_file"] + ".stats.csv")
+    stats = {
+        "query_count": "0",
+        "training_samples": "0",
+        "residual_samples": "0",
+        "nrc_query_seconds": "0",
+        "nrc_train_seconds": "0",
+        "target_trace_seconds": "0",
+    }
+    if stats_path.exists():
+        with stats_path.open(newline="") as file:
+            reader = csv.DictReader(file)
+            stats.update(next(reader, {}))
+        shutil.copy2(stats_path, run_dir / "nrc_stats.csv")
+
+    row = {
         "method": method["name"],
         "spp": method["spp"],
         "render_seconds": elapsed,
         "image": final_image.name,
     }
+    row.update(stats)
+    return row
 
 
 def main():
@@ -125,13 +142,21 @@ def main():
             row.update(metrics(image, reference_image))
 
     with (experiment_dir / "metrics.csv").open("w", newline="") as file:
-        fieldnames = ["method", "spp", "render_seconds", "image", "mse", "mae", "psnr"]
+        fieldnames = [
+            "method", "spp", "render_seconds", "image", "mse", "mae", "psnr",
+            "query_count", "training_samples", "residual_samples", "nrc_query_seconds",
+            "nrc_train_seconds", "target_trace_seconds"
+        ]
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
     with (experiment_dir / "timing.csv").open("w", newline="") as file:
-        fieldnames = ["method", "spp", "render_seconds"]
+        fieldnames = [
+            "method", "spp", "render_seconds", "query_count", "training_samples",
+            "residual_samples", "nrc_query_seconds", "nrc_train_seconds",
+            "target_trace_seconds"
+        ]
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
