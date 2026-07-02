@@ -26,6 +26,7 @@ public:
 private:
     NrcSettings settings;
     std::shared_ptr<INeuralRadianceCache> radianceCache;
+    std::shared_ptr<ResidualCorrector> residualCorrector;
     std::unique_ptr<ContinuationEstimator> continuationEstimator;
 
     bool shouldUseContinuationEstimator(int bounce) const;

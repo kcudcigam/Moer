@@ -4,6 +4,7 @@
 
 #include "CoreLayer/ColorSpace/Color.h"
 #include "FunctionLayer/Integrator/Nrc/INeuralRadianceCache.h"
+#include "FunctionLayer/Integrator/Nrc/ResidualCorrection.h"
 
 class Scene;
 
@@ -41,18 +42,22 @@ private:
 
 class TwoLevelContinuationEstimator : public ContinuationEstimator {
 public:
-    explicit TwoLevelContinuationEstimator(std::shared_ptr<INeuralRadianceCache> cache)
-        : radianceCache(std::move(cache)) {}
+    explicit TwoLevelContinuationEstimator(std::shared_ptr<INeuralRadianceCache> cache,
+                                           std::shared_ptr<ResidualCorrector> corrector = nullptr)
+        : radianceCache(std::move(cache)),
+          residualCorrector(std::move(corrector)) {}
 
     Spectrum estimate(const ContinuationContext &context) override {
         RadianceQuery query = RadianceQuery::FromIntersection(
             context.intersection,
             context.outgoing,
             context.bounce);
-        // The residual correction is implemented in the two-level branch.
-        return radianceCache ? radianceCache->query(query) : Spectrum(0.0);
+        Spectrum prediction = radianceCache ? radianceCache->query(query) : Spectrum(0.0);
+        Spectrum residual = residualCorrector ? residualCorrector->estimateGlobalResidual() : Spectrum(0.0);
+        return prediction + residual;
     }
 
 private:
     std::shared_ptr<INeuralRadianceCache> radianceCache;
+    std::shared_ptr<ResidualCorrector> residualCorrector;
 };
