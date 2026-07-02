@@ -17,7 +17,7 @@ NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
                         _spp,
                         _renderThreadNum),
       settings(_settings),
-      radianceCache(std::make_shared<DummyRadianceCache>()) {
+      radianceCache(std::make_shared<RunningAverageRadianceCache>(_settings.maxTrainingSamples)) {
     if (settings.mode == NrcMode::Nrc) {
         continuationEstimator = std::make_unique<NrcContinuationEstimator>(radianceCache);
     } else if (settings.mode == NrcMode::TwoLevel) {
@@ -31,7 +31,18 @@ bool NrcPathIntegrator::shouldUseContinuationEstimator(int bounce) const {
            bounce >= settings.queryBounce;
 }
 
+Spectrum NrcPathIntegrator::traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene) {
+    return LiInternal(ray, scene, false, false);
+}
+
 Spectrum NrcPathIntegrator::Li(const Ray &initialRay, std::shared_ptr<Scene> scene) {
+    return LiInternal(initialRay, scene, true, true);
+}
+
+Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
+                                       std::shared_ptr<Scene> scene,
+                                       bool enableEstimator,
+                                       bool collectTrainingSamples) {
     const double eps = 1e-4;
     Spectrum L{0.0};
     Spectrum throughput{1.0};
@@ -86,13 +97,31 @@ Spectrum NrcPathIntegrator::Li(const Ray &initialRay, std::shared_ptr<Scene> sce
             }
         }
 
-        if (shouldUseContinuationEstimator(nBounces)) {
+        if (enableEstimator && shouldUseContinuationEstimator(nBounces)) {
             ContinuationContext context;
             context.intersection = its;
             context.outgoing = -ray.direction;
             context.throughput = throughput;
             context.bounce = nBounces;
             context.scene = scene;
+
+            PathIntegratorLocalRecord sampleScatterRecord = sampleScatter(its, ray);
+            Spectrum targetRadiance(0.0);
+            if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+                Ray continuationRay{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
+                Spectrum continuationThroughput = sampleScatterRecord.f / sampleScatterRecord.pdf;
+                targetRadiance = continuationThroughput * traceContinuation(continuationRay, scene);
+
+                RadianceSample trainingSample;
+                trainingSample.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
+                trainingSample.target = targetRadiance;
+                trainingSample.weight = 1.0;
+                if (collectTrainingSamples) {
+                    radianceCache->enqueueTrainingSamples({trainingSample});
+                    radianceCache->train(settings.trainStepsPerRender);
+                }
+            }
+
             L += throughput * continuationEstimator->estimate(context);
             break;
         }
