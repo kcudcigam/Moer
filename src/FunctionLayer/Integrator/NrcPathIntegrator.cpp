@@ -21,7 +21,8 @@ NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
     if (settings.mode == NrcMode::Nrc) {
         continuationEstimator = std::make_unique<NrcContinuationEstimator>(radianceCache);
     } else if (settings.mode == NrcMode::TwoLevel) {
-        continuationEstimator = std::make_unique<TwoLevelContinuationEstimator>(radianceCache);
+        residualCorrector = std::make_shared<ResidualCorrector>();
+        continuationEstimator = std::make_unique<TwoLevelContinuationEstimator>(radianceCache, residualCorrector);
     }
 }
 
