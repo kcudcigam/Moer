@@ -1,0 +1,13 @@
+{
+  "renderer": {
+    "integrator": "nrc_path",
+    "spp": 16,
+    "output_file": "results/nrc_dummy.png",
+    "nrc": {
+      "mode": "nrc",
+      "query_bounce": 2,
+      "train_steps": 0,
+      "max_training_samples": 65536
+    }
+  }
+}

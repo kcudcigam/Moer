@@ -20,7 +20,7 @@ GuidedPathIntegrator::GuidedPathIntegrator(std::shared_ptr<Camera> _camera,
 
     numFlashedSamples = 0;
 
-#ifdef _WIN32
+#if defined(_MSC_VER)
     Concurrency::SchedulerPolicy schedulerPolicy;
     schedulerPolicy.SetConcurrencyLimits(1, _renderThreadNum);
     Concurrency::Scheduler::SetDefaultSchedulerPolicy(schedulerPolicy);

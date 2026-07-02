@@ -1,5 +1,7 @@
 build
+build*/
 target
+results/
 .cache
 .vs*
 NJUCG.mdj

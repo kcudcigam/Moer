@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#ifdef _WIN32
+#if defined(_MSC_VER)
 #include <ppl.h>
 #else
 #include <omp.h>
@@ -161,7 +161,7 @@ private:
                 return sample.position[node->splitAxis] < node->splitPos;
             });
 
-#ifdef _WIN32
+#if defined(_MSC_VER)
             if (std::distance(begin, end) < 512) {
                 updateNode(node->children[0], begin, middle, depth + 1);
                 updateNode(node->children[1], middle, end, depth + 1);

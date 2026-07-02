@@ -1,0 +1,11 @@
+{
+  "renderer": {
+    "integrator": "nrc_path",
+    "spp": 16,
+    "output_file": "results/path_trace_framework.png",
+    "nrc": {
+      "mode": "path_trace",
+      "query_bounce": 2
+    }
+  }
+}
