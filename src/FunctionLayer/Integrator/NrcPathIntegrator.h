@@ -3,8 +3,8 @@
 #include <memory>
 
 #include "FunctionLayer/Integrator/Nrc/ContinuationEstimator.h"
-#include "FunctionLayer/Integrator/Nrc/DummyRadianceCache.h"
 #include "FunctionLayer/Integrator/Nrc/NrcSettings.h"
+#include "FunctionLayer/Integrator/Nrc/RunningAverageRadianceCache.h"
 #include "FunctionLayer/Integrator/PathIntegrator-new.h"
 
 class NrcPathIntegrator : public PathIntegratorNew {
@@ -29,4 +29,9 @@ private:
     std::unique_ptr<ContinuationEstimator> continuationEstimator;
 
     bool shouldUseContinuationEstimator(int bounce) const;
+    Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene);
+    Spectrum LiInternal(const Ray &initialRay,
+                        std::shared_ptr<Scene> scene,
+                        bool enableEstimator,
+                        bool collectTrainingSamples);
 };
