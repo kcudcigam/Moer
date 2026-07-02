@@ -1,0 +1,54 @@
+{
+  "name": "box_matrix",
+  "scene": "scenes/box",
+  "resolution": [192, 108],
+  "methods": [
+    {
+      "name": "path_low",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "path_reference",
+      "spp": 32,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "nrc",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "nrc",
+          "query_bounce": 1,
+          "train_steps": 1,
+          "max_training_samples": 16384
+        }
+      }
+    },
+    {
+      "name": "two_level",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "two_level",
+          "query_bounce": 1,
+          "residual_probability": 0.125
+        }
+      }
+    }
+  ]
+}

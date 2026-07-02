@@ -9,3 +9,6 @@ cmake-build*
 .idea
 ./doxygen-doc
 scenes/**/*.hdr
+
+__pycache__/
+*.pyc
