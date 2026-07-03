@@ -12,6 +12,15 @@ public:
         querySeconds += seconds;
     }
 
+    void addQueries(long long count, double seconds) {
+        if (count <= 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        queryCount += count;
+        querySeconds += seconds;
+    }
+
     void addTrainingSample() {
         std::lock_guard<std::mutex> lock(mutex);
         ++trainingSamples;

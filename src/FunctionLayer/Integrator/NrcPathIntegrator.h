@@ -31,6 +31,15 @@ public:
     }
 
 private:
+    struct BatchedSampleWork {
+        Point2i pixel{0, 0};
+        Spectrum radiance{0.0};
+        Spectrum throughput{1.0};
+        RadianceQuery query;
+        Spectrum targetRadiance{0.0};
+        bool hasTargetRadiance = false;
+    };
+
     NrcSettings settings;
     std::shared_ptr<INeuralRadianceCache> radianceCache;
     std::shared_ptr<ResidualCorrector> residualCorrector;
@@ -51,6 +60,14 @@ private:
                         bool collectTrainingSamples,
                         bool collectResidualSamples,
                         bool useCachedRadiance);
+    void renderTilePassBatched(const std::shared_ptr<Scene> &scene,
+                               const std::vector<std::shared_ptr<Tile>> &tiles,
+                               int passSpp);
+    bool traceToBatchedQuery(const Ray &initialRay,
+                             std::shared_ptr<Scene> scene,
+                             Sampler &localSampler,
+                             const Point2i &pixel,
+                             BatchedSampleWork &work);
     PathIntegratorLocalRecord sampleDirectLightingLocal(std::shared_ptr<Scene> scene,
                                                         const Intersection &its,
                                                         const Ray &ray,

@@ -197,6 +197,204 @@ void NrcPathIntegrator::renderTilePass(const std::shared_ptr<Scene> &scene,
     printProgress(1.0f);
 }
 
+bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
+                                            std::shared_ptr<Scene> scene,
+                                            Sampler &localSampler,
+                                            const Point2i &pixel,
+                                            BatchedSampleWork &work) {
+    const double eps = 1e-4;
+    Spectrum L{0.0};
+    Spectrum throughput{1.0};
+    Ray ray = initialRay;
+    int nBounces = 0;
+    auto itsOpt = scene->intersect(ray);
+
+    while (true) {
+        if (nBounces == 0) {
+            PathIntegratorLocalRecord evalLightRecord = evalEmittance(scene, itsOpt, ray);
+            L += throughput * evalLightRecord.f;
+        }
+
+        if (!itsOpt.has_value()) {
+            work.pixel = pixel;
+            work.radiance = L;
+            return false;
+        }
+
+        auto its = itsOpt.value();
+        nBounces++;
+
+        if (!its.material) {
+            work.pixel = pixel;
+            work.radiance = L;
+            return false;
+        }
+
+        auto bxdf = its.material->getBxDF(its);
+        if (bxdf->isNull()) {
+            nBounces--;
+            ray = Ray{its.position + ray.direction * eps, ray.direction};
+            itsOpt = scene->intersect(ray);
+            continue;
+        }
+
+        double pSurvive = russianRoulette(throughput, nBounces);
+        if (localSampler.sample1D() >= pSurvive) {
+            work.pixel = pixel;
+            work.radiance = L;
+            return false;
+        }
+        throughput /= pSurvive;
+
+        for (int i = 0; i < nDirectLightSamples; ++i) {
+            PathIntegratorLocalRecord sampleLightRecord = sampleDirectLightingLocal(scene, its, ray, localSampler);
+            PathIntegratorLocalRecord evalScatterRecord = evalScatter(its, ray, sampleLightRecord.wi);
+
+            if (!sampleLightRecord.f.isBlack()) {
+                double misw = MISWeight(sampleLightRecord.pdf, evalScatterRecord.pdf);
+                if (sampleLightRecord.isDelta) {
+                    misw = 1.0;
+                }
+                L += throughput * sampleLightRecord.f * evalScatterRecord.f
+                     / sampleLightRecord.pdf * misw
+                     / nDirectLightSamples;
+            }
+        }
+
+        if (settings.mode != NrcMode::PathTrace &&
+            isCacheableSurface(its) &&
+            shouldUseContinuationEstimator(nBounces)) {
+            work.pixel = pixel;
+            work.radiance = L;
+            work.throughput = throughput;
+            work.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
+
+            const bool needsTarget = settings.pathTraceBlend > 0.0 ||
+                                     (residualCorrector && settings.residualProbability > 0.0);
+            if (needsTarget) {
+                PathIntegratorLocalRecord sampleScatterRecord = sampleScatterLocal(its, ray, localSampler);
+                if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+                    Ray continuationRay{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
+                    Spectrum continuationThroughput = sampleScatterRecord.f / sampleScatterRecord.pdf;
+                    auto targetStart = std::chrono::high_resolution_clock::now();
+                    work.targetRadiance = continuationThroughput * traceContinuation(continuationRay, scene, localSampler);
+                    auto targetEnd = std::chrono::high_resolution_clock::now();
+                    stats.addTargetTrace(std::chrono::duration<double>(targetEnd - targetStart).count());
+                    work.hasTargetRadiance = true;
+                }
+            }
+            return true;
+        }
+
+        PathIntegratorLocalRecord sampleScatterRecord = sampleScatterLocal(its, ray, localSampler);
+        if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+            throughput *= sampleScatterRecord.f / sampleScatterRecord.pdf;
+        } else {
+            work.pixel = pixel;
+            work.radiance = L;
+            return false;
+        }
+
+        ray = Ray{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
+        itsOpt = scene->intersect(ray);
+
+        auto evalLightRecord = evalEmittance(scene, itsOpt, ray);
+        if (!evalLightRecord.f.isBlack()) {
+            double misw = MISWeight(sampleScatterRecord.pdf, evalLightRecord.pdf);
+            if (sampleScatterRecord.isDelta) {
+                misw = 1.0;
+            }
+            L += throughput * evalLightRecord.f * misw;
+        }
+    }
+}
+
+void NrcPathIntegrator::renderTilePassBatched(const std::shared_ptr<Scene> &scene,
+                                              const std::vector<std::shared_ptr<Tile>> &tiles,
+                                              int passSpp) {
+    if (passSpp <= 0 || tiles.empty()) {
+        return;
+    }
+
+    std::atomic<size_t> nextTile{0};
+    std::atomic<size_t> finishedTiles{0};
+    std::vector<std::thread> threads;
+    threads.reserve(renderThreadNum);
+
+    for (int threadId = 0; threadId < renderThreadNum; ++threadId) {
+        threads.emplace_back([&, threadId]() {
+            auto localSampler = sampler->clone(threadId);
+            localSampler->startPixel({0, 0});
+
+            std::vector<BatchedSampleWork> pending;
+            std::vector<RadianceQuery> queries;
+            std::vector<Spectrum> cachedRadiance;
+
+            while (true) {
+                size_t tileIndex = nextTile.fetch_add(1);
+                if (tileIndex >= tiles.size()) {
+                    break;
+                }
+
+                pending.clear();
+                queries.clear();
+
+                auto tile = tiles[tileIndex];
+                for (auto it = tile->begin(); it != tile->end(); ++it) {
+                    auto pixelPosition = *it;
+                    localSampler->startPixel(pixelPosition);
+                    for (int i = 0; i < passSpp; ++i) {
+                        auto ray = camera->generateRay(
+                            film->getResolution(),
+                            pixelPosition,
+                            localSampler->getCameraSample());
+                        BatchedSampleWork work;
+                        if (traceToBatchedQuery(ray, scene, *localSampler, pixelPosition, work)) {
+                            queries.push_back(work.query);
+                            pending.push_back(work);
+                        } else {
+                            film->deposit(pixelPosition, work.radiance);
+                        }
+                        localSampler->nextSample();
+                    }
+                }
+
+                if (!queries.empty()) {
+                    auto queryStart = std::chrono::high_resolution_clock::now();
+                    radianceCache->queryBatch(queries, cachedRadiance);
+                    auto queryEnd = std::chrono::high_resolution_clock::now();
+                    stats.addQueries(
+                        static_cast<long long>(queries.size()),
+                        std::chrono::duration<double>(queryEnd - queryStart).count());
+
+                    Spectrum residual = residualCorrector ? residualCorrector->estimateGlobalResidual() : Spectrum(0.0);
+                    for (size_t i = 0; i < pending.size(); ++i) {
+                        Spectrum continuation = cachedRadiance[i] + residual;
+                        if (!isTrustedCachedRadiance(continuation) && pending[i].hasTargetRadiance) {
+                            continuation = pending[i].targetRadiance;
+                        } else if (pending[i].hasTargetRadiance && settings.pathTraceBlend > 0.0) {
+                            double targetWeight = std::min(1.0, std::max(0.0, settings.pathTraceBlend));
+                            continuation = continuation * (1.0 - targetWeight) +
+                                           pending[i].targetRadiance * targetWeight;
+                        }
+                        film->deposit(pending[i].pixel, pending[i].radiance + pending[i].throughput * continuation);
+                    }
+                }
+
+                size_t done = finishedTiles.fetch_add(1) + 1;
+                if (done % 5 == 0) {
+                    printProgress(static_cast<float>(done) / static_cast<float>(tiles.size()));
+                }
+            }
+        });
+    }
+
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    printProgress(1.0f);
+}
+
 void NrcPathIntegrator::render(std::shared_ptr<Scene> scene) {
     if (settings.mode == NrcMode::PathTrace) {
         auto tiles = tileGenerator->generateTiles();
@@ -218,7 +416,7 @@ void NrcPathIntegrator::render(std::shared_ptr<Scene> scene) {
         renderTilePass(scene, tiles, settings.trainingSpp, false, false, true, true);
         pendingTrainingSamples.store(0);
     }
-    renderTilePass(scene, tiles, spp, true, false, false, true);
+    renderTilePassBatched(scene, tiles, spp);
 }
 
 Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
