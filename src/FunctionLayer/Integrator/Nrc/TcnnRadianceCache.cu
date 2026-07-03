@@ -15,9 +15,10 @@
 
 namespace {
 
-constexpr uint32_t kInputDims = 12;
+constexpr uint32_t kInputDims = 15;
 constexpr uint32_t kOutputDims = 3;
 constexpr uint32_t kBatchSize = 1024;
+constexpr float kRadianceScale = 16.0f;
 
 using Precision = tcnn::network_precision_t;
 
@@ -38,15 +39,26 @@ void encodeQuery(const RadianceQuery &query, float *out) {
     out[6] = clampFinite(query.outgoing.x * 0.5 + 0.5, 0.0, 1.0);
     out[7] = clampFinite(query.outgoing.y * 0.5 + 0.5, 0.0, 1.0);
     out[8] = clampFinite(query.outgoing.z * 0.5 + 0.5, 0.0, 1.0);
-    out[9] = clampFinite(query.roughness, 0.0, 1.0);
-    out[10] = clampFinite(query.materialType / 32.0, 0.0, 1.0);
-    out[11] = clampFinite(query.bounce / 16.0, 0.0, 1.0);
+    out[9] = clampFinite(query.albedo[0], 0.0, 1.0);
+    out[10] = clampFinite(query.albedo[1], 0.0, 1.0);
+    out[11] = clampFinite(query.albedo[2], 0.0, 1.0);
+    out[12] = clampFinite(query.roughness, 0.0, 1.0);
+    out[13] = clampFinite(query.materialType / 32.0, 0.0, 1.0);
+    out[14] = clampFinite(query.bounce / 16.0, 0.0, 1.0);
 }
 
 void encodeTarget(const Spectrum &target, float *out) {
-    out[0] = clampFinite(target[0], 0.0, 1.0e6);
-    out[1] = clampFinite(target[1], 0.0, 1.0e6);
-    out[2] = clampFinite(target[2], 0.0, 1.0e6);
+    out[0] = std::log1p(clampFinite(target[0], 0.0, 1.0e6) / kRadianceScale);
+    out[1] = std::log1p(clampFinite(target[1], 0.0, 1.0e6) / kRadianceScale);
+    out[2] = std::log1p(clampFinite(target[2], 0.0, 1.0e6) / kRadianceScale);
+}
+
+float decodeRadiance(float value) {
+    if (!std::isfinite(value)) {
+        return 0.0f;
+    }
+    value = std::max(-20.0f, std::min(20.0f, value));
+    return std::max(0.0f, std::expm1(value) * kRadianceScale);
 }
 
 class TcnnRadianceCache final : public INeuralRadianceCache {
@@ -96,6 +108,7 @@ public:
     void reset() override {
         std::lock_guard<std::mutex> lock(mutex);
         samples.clear();
+        trainCursor = 0;
         trained = false;
     }
 
@@ -120,20 +133,20 @@ public:
 
         std::vector<float> hostInput(batchSize * kInputDims, 0.0f);
         std::vector<float> hostTarget(batchSize * kOutputDims, 0.0f);
-        for (uint32_t i = 0; i < batchSize; ++i) {
-            const RadianceSample &sample = samples[i % samples.size()];
-            encodeQuery(sample.query, hostInput.data() + i * kInputDims);
-            encodeTarget(sample.target, hostTarget.data() + i * kOutputDims);
-        }
-
         tcnn::GPUMemory<float> inputMemory(hostInput.size());
         tcnn::GPUMemory<float> targetMemory(hostTarget.size());
-        inputMemory.copy_from_host(hostInput);
-        targetMemory.copy_from_host(hostTarget);
-
         tcnn::GPUMatrix<float> input(inputMemory.data(), kInputDims, batchSize);
         tcnn::GPUMatrix<float> target(targetMemory.data(), kOutputDims, batchSize);
+
         for (int i = 0; i < steps; ++i) {
+            for (uint32_t j = 0; j < batchSize; ++j) {
+                const RadianceSample &sample = samples[(trainCursor + j) % samples.size()];
+                encodeQuery(sample.query, hostInput.data() + j * kInputDims);
+                encodeTarget(sample.target, hostTarget.data() + j * kOutputDims);
+            }
+            trainCursor = (trainCursor + batchSize) % samples.size();
+            inputMemory.copy_from_host(hostInput);
+            targetMemory.copy_from_host(hostTarget);
             model.trainer->training_step(stream, input, target);
         }
         cudaStreamSynchronize(stream);
@@ -158,15 +171,51 @@ public:
 
         queryOutputMemory.copy_to_host(queryHostOutput);
         return Spectrum(RGB3(
-            std::max(0.0f, static_cast<float>(queryHostOutput[0])),
-            std::max(0.0f, static_cast<float>(queryHostOutput[1])),
-            std::max(0.0f, static_cast<float>(queryHostOutput[2]))));
+            decodeRadiance(static_cast<float>(queryHostOutput[0])),
+            decodeRadiance(static_cast<float>(queryHostOutput[1])),
+            decodeRadiance(static_cast<float>(queryHostOutput[2]))));
+    }
+
+    void queryBatch(const std::vector<RadianceQuery> &queries,
+                    std::vector<Spectrum> &outputs) const override {
+        std::lock_guard<std::mutex> lock(mutex);
+        outputs.clear();
+        outputs.resize(queries.size(), Spectrum(0.0));
+        if (!trained || queries.empty()) {
+            return;
+        }
+
+        uint32_t batchSize = static_cast<uint32_t>(queries.size());
+        batchSize = tcnn::next_multiple(batchSize, tcnn::BATCH_SIZE_GRANULARITY);
+        std::vector<float> hostInput(batchSize * kInputDims, 0.0f);
+        std::vector<float> hostOutput(batchSize * kOutputDims, 0.0f);
+        for (size_t i = 0; i < queries.size(); ++i) {
+            encodeQuery(queries[i], hostInput.data() + i * kInputDims);
+        }
+
+        tcnn::GPUMemory<float> inputMemory(hostInput.size());
+        tcnn::GPUMemory<float> outputMemory(hostOutput.size());
+        inputMemory.copy_from_host(hostInput);
+
+        tcnn::GPUMatrix<float> input(inputMemory.data(), kInputDims, batchSize);
+        tcnn::GPUMatrix<float> output(outputMemory.data(), kOutputDims, batchSize);
+        model.network->inference(stream, input, output);
+        cudaStreamSynchronize(stream);
+
+        outputMemory.copy_to_host(hostOutput);
+        for (size_t i = 0; i < queries.size(); ++i) {
+            outputs[i] = Spectrum(RGB3(
+                decodeRadiance(hostOutput[i * kOutputDims + 0]),
+                decodeRadiance(hostOutput[i * kOutputDims + 1]),
+                decodeRadiance(hostOutput[i * kOutputDims + 2])));
+        }
     }
 
 private:
     size_t capacity;
     mutable std::mutex mutex;
     std::vector<RadianceSample> samples;
+    size_t trainCursor = 0;
     tcnn::TrainableModel model;
     cudaStream_t stream = nullptr;
     bool trained = false;

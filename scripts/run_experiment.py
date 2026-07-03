@@ -66,9 +66,6 @@ def run_method(root, executable, base_scene, run_dir, experiment, method):
     (run_dir / "stdout.txt").write_text(process.stdout)
     (run_dir / "stderr.txt").write_text(process.stderr)
     (run_dir / "scene.json").write_text(json.dumps(scene, indent=2))
-    if process.returncode != 0:
-        raise RuntimeError(f"{method['name']} failed with {process.returncode}\n{process.stdout}\n{process.stderr}")
-
     image_path = actual_hdr_path(scene_dir, renderer["output_file"])
     final_image = run_dir / f"{method['name']}.hdr"
     if image_path.exists():
@@ -82,7 +79,14 @@ def run_method(root, executable, base_scene, run_dir, experiment, method):
                         raise
                     time.sleep(0.1)
     else:
+        if process.returncode != 0:
+            raise RuntimeError(f"{method['name']} failed with {process.returncode}\n{process.stdout}\n{process.stderr}")
         raise FileNotFoundError(f"missing render output: {image_path}")
+
+    if process.returncode != 0:
+        (run_dir / "warning.txt").write_text(
+            f"renderer returned {process.returncode} after writing {final_image.name}\n"
+        )
 
     stats_path = Path(renderer["output_file"] + ".stats.csv")
     stats = {

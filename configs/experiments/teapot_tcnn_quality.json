@@ -1,0 +1,70 @@
+{
+  "name": "teapot_tcnn_quality",
+  "scene": "scenes/teapot",
+  "resolution": [128, 72],
+  "methods": [
+    {
+      "name": "path_low",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "path_reference",
+      "spp": 32,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "path_trace",
+          "query_bounce": 2
+        }
+      }
+    },
+    {
+      "name": "nrc_tcnn_freeze",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "nrc",
+          "backend": "tcnn",
+          "query_bounce": 2,
+          "train_steps": 0,
+          "train_batch_size": 512,
+          "training_spp": 16,
+          "final_train_steps": 1024,
+          "freeze_after_training": true,
+          "path_trace_blend": 0.75,
+          "min_training_samples_before_query": 1024,
+          "max_training_samples": 65536
+        }
+      }
+    },
+    {
+      "name": "two_level_tcnn_freeze",
+      "spp": 2,
+      "renderer": {
+        "integrator": "nrc_path",
+        "nrc": {
+          "mode": "two_level",
+          "backend": "tcnn",
+          "query_bounce": 2,
+          "train_steps": 0,
+          "train_batch_size": 512,
+          "training_spp": 16,
+          "final_train_steps": 1024,
+          "freeze_after_training": true,
+          "path_trace_blend": 0.25,
+          "min_training_samples_before_query": 1024,
+          "max_training_samples": 65536,
+          "residual_probability": 0.125
+        }
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 #include "FunctionLayer/Integrator/Nrc/ContinuationEstimator.h"
 #include "FunctionLayer/Integrator/Nrc/NrcSettings.h"
@@ -19,6 +20,7 @@ public:
                       int _renderThreadNum = 4);
 
     Spectrum Li(const Ray &initialRay, std::shared_ptr<Scene> scene) override;
+    void render(std::shared_ptr<Scene> scene) override;
 
     std::shared_ptr<INeuralRadianceCache> getRadianceCache() const {
         return radianceCache;
@@ -35,12 +37,23 @@ private:
     std::unique_ptr<ContinuationEstimator> continuationEstimator;
     NrcStats stats;
     std::atomic<int> pendingTrainingSamples{0};
+    std::atomic<long long> collectedTrainingSamples{0};
 
     bool shouldUseContinuationEstimator(int bounce) const;
     bool shouldTrainCache();
+    bool isCacheableSurface(const Intersection &its) const;
+    bool isTrustedCachedRadiance(const Spectrum &radiance) const;
+    void trainCache(int steps);
+    void renderTilePass(const std::shared_ptr<Scene> &scene,
+                        const std::vector<std::shared_ptr<Tile>> &tiles,
+                        int passSpp,
+                        bool depositToFilm,
+                        bool collectTrainingSamples,
+                        bool useCachedRadiance);
     Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene);
     Spectrum LiInternal(const Ray &initialRay,
                         std::shared_ptr<Scene> scene,
                         bool enableEstimator,
-                        bool collectTrainingSamples);
+                        bool collectTrainingSamples,
+                        bool useCachedRadiance);
 };

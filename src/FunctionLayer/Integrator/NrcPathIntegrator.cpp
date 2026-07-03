@@ -1,6 +1,9 @@
 #include "NrcPathIntegrator.h"
 
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <thread>
 
 #include "FastMath.h"
 #include "FunctionLayer/Integrator/Nrc/RadianceCacheFactory.h"
@@ -32,7 +35,8 @@ NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
 bool NrcPathIntegrator::shouldUseContinuationEstimator(int bounce) const {
     return settings.mode != NrcMode::PathTrace &&
            continuationEstimator != nullptr &&
-           bounce >= settings.queryBounce;
+           bounce >= settings.queryBounce &&
+           collectedTrainingSamples.load() >= settings.minTrainingSamplesBeforeQuery;
 }
 
 bool NrcPathIntegrator::shouldTrainCache() {
@@ -44,18 +48,119 @@ bool NrcPathIntegrator::shouldTrainCache() {
     return sampleIndex % batchSize == 0;
 }
 
+bool NrcPathIntegrator::isCacheableSurface(const Intersection &its) const {
+    return its.material && its.material->type == EMaterialType::Diffuse;
+}
+
+bool NrcPathIntegrator::isTrustedCachedRadiance(const Spectrum &radiance) const {
+    double maxChannel = 0.0;
+    double minChannel = std::numeric_limits<double>::max();
+    double sum = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        double value = radiance[i];
+        if (!std::isfinite(value) || value < 0.0) {
+            return false;
+        }
+        maxChannel = std::max(maxChannel, value);
+        minChannel = std::min(minChannel, value);
+        sum += value;
+    }
+    if (maxChannel > 255.0 || sum > 512.0) {
+        return false;
+    }
+    if (maxChannel > 4.0 && maxChannel > std::max(1.0, minChannel) * 8.0) {
+        return false;
+    }
+    return true;
+}
+
+void NrcPathIntegrator::trainCache(int steps) {
+    if (steps <= 0) {
+        return;
+    }
+    auto trainStart = std::chrono::high_resolution_clock::now();
+    radianceCache->train(steps);
+    auto trainEnd = std::chrono::high_resolution_clock::now();
+    stats.addTraining(std::chrono::duration<double>(trainEnd - trainStart).count());
+}
+
 Spectrum NrcPathIntegrator::traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene) {
-    return LiInternal(ray, scene, false, false);
+    return LiInternal(ray, scene, false, false, false);
 }
 
 Spectrum NrcPathIntegrator::Li(const Ray &initialRay, std::shared_ptr<Scene> scene) {
-    return LiInternal(initialRay, scene, true, true);
+    return LiInternal(initialRay, scene, true, true, true);
+}
+
+void NrcPathIntegrator::renderTilePass(const std::shared_ptr<Scene> &scene,
+                                       const std::vector<std::shared_ptr<Tile>> &tiles,
+                                       int passSpp,
+                                       bool depositToFilm,
+                                       bool collectTraining,
+                                       bool useCachedRadiance) {
+    if (passSpp <= 0 || tiles.empty()) {
+        return;
+    }
+
+    auto previousSampler = sampler;
+    sampler = std::shared_ptr<Sampler>(previousSampler->clone(0));
+    sampler->startPixel({0, 0});
+
+    for (size_t tileIndex = 0; tileIndex < tiles.size(); ++tileIndex) {
+        auto tile = tiles[tileIndex];
+        for (auto it = tile->begin(); it != tile->end(); ++it) {
+            auto pixelPosition = *it;
+            sampler->startPixel(pixelPosition);
+            for (int i = 0; i < passSpp; ++i) {
+                auto ray = camera->generateRay(
+                    film->getResolution(),
+                    pixelPosition,
+                    sampler->getCameraSample());
+                auto L = LiInternal(ray, scene, true, collectTraining, useCachedRadiance);
+                if (depositToFilm) {
+                    film->deposit(pixelPosition, L);
+                }
+                sampler->nextSample();
+            }
+        }
+        size_t done = tileIndex + 1;
+        if (done % 5 == 0) {
+            printProgress(static_cast<float>(done) / static_cast<float>(tiles.size()));
+        }
+    }
+    sampler = previousSampler;
+    printProgress(1.0f);
+}
+
+void NrcPathIntegrator::render(std::shared_ptr<Scene> scene) {
+    if (settings.mode == NrcMode::PathTrace) {
+        auto tiles = tileGenerator->generateTiles();
+        renderTilePass(scene, tiles, spp, true, false, false);
+        return;
+    }
+
+    if (!settings.freezeAfterTraining ||
+        settings.trainingSpp <= 0) {
+        MonteCarloIntegrator::render(scene);
+        return;
+    }
+
+    auto tiles = tileGenerator->generateTiles();
+    renderTilePass(scene, tiles, settings.trainingSpp, false, true, false);
+    trainCache(settings.finalTrainSteps);
+    pendingTrainingSamples.store(0);
+    if (settings.mode == NrcMode::TwoLevel && residualCorrector) {
+        renderTilePass(scene, tiles, settings.trainingSpp, false, true, true);
+        pendingTrainingSamples.store(0);
+    }
+    renderTilePass(scene, tiles, spp, true, false, true);
 }
 
 Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                                        std::shared_ptr<Scene> scene,
                                        bool enableEstimator,
-                                       bool collectTrainingSamples) {
+                                       bool collectTrainingSamples,
+                                       bool useCachedRadiance) {
     const double eps = 1e-4;
     Spectrum L{0.0};
     Spectrum throughput{1.0};
@@ -110,7 +215,11 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             }
         }
 
-        if (enableEstimator && shouldUseContinuationEstimator(nBounces)) {
+        if (enableEstimator &&
+            settings.mode != NrcMode::PathTrace &&
+            continuationEstimator != nullptr &&
+            isCacheableSurface(its) &&
+            nBounces >= settings.queryBounce) {
             ContinuationContext context;
             context.intersection = its;
             context.outgoing = -ray.direction;
@@ -118,38 +227,56 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             context.bounce = nBounces;
             context.scene = scene;
 
-            PathIntegratorLocalRecord sampleScatterRecord = sampleScatter(its, ray);
             Spectrum targetRadiance(0.0);
-            if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+            bool hasTargetRadiance = false;
+            auto traceTargetRadiance = [&]() {
+                if (hasTargetRadiance) {
+                    return;
+                }
+                PathIntegratorLocalRecord sampleScatterRecord = sampleScatter(its, ray);
+                if (sampleScatterRecord.f.isBlack() || sampleScatterRecord.pdf == 0) {
+                    return;
+                }
                 Ray continuationRay{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
                 Spectrum continuationThroughput = sampleScatterRecord.f / sampleScatterRecord.pdf;
                 auto targetStart = std::chrono::high_resolution_clock::now();
                 targetRadiance = continuationThroughput * traceContinuation(continuationRay, scene);
                 auto targetEnd = std::chrono::high_resolution_clock::now();
                 stats.addTargetTrace(std::chrono::duration<double>(targetEnd - targetStart).count());
+                hasTargetRadiance = true;
+            };
 
+            if (collectTrainingSamples) {
+                traceTargetRadiance();
+            }
+
+            if (hasTargetRadiance) {
                 RadianceSample trainingSample;
                 trainingSample.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
                 trainingSample.target = targetRadiance;
                 trainingSample.weight = 1.0;
                 if (collectTrainingSamples) {
                     radianceCache->enqueueTrainingSamples({trainingSample});
+                    collectedTrainingSamples.fetch_add(1);
                     stats.addTrainingSample();
                     if (shouldTrainCache()) {
-                        auto trainStart = std::chrono::high_resolution_clock::now();
-                        radianceCache->train(settings.trainStepsPerRender);
-                        auto trainEnd = std::chrono::high_resolution_clock::now();
-                        stats.addTraining(std::chrono::duration<double>(trainEnd - trainStart).count());
+                        trainCache(settings.trainStepsPerRender);
                     }
                 }
             }
 
-            auto queryStart = std::chrono::high_resolution_clock::now();
-            Spectrum cachedRadiance = continuationEstimator->estimate(context);
-            auto queryEnd = std::chrono::high_resolution_clock::now();
-            stats.addQuery(std::chrono::duration<double>(queryEnd - queryStart).count());
+            Spectrum cachedRadiance(0.0);
+            bool usedCachedRadiance = false;
+            if (useCachedRadiance && shouldUseContinuationEstimator(nBounces)) {
+                auto queryStart = std::chrono::high_resolution_clock::now();
+                cachedRadiance = continuationEstimator->estimate(context);
+                auto queryEnd = std::chrono::high_resolution_clock::now();
+                stats.addQuery(std::chrono::duration<double>(queryEnd - queryStart).count());
+                usedCachedRadiance = isTrustedCachedRadiance(cachedRadiance);
+            }
 
-            if (collectTrainingSamples && residualCorrector) {
+            if (collectTrainingSamples && usedCachedRadiance && residualCorrector) {
+                traceTargetRadiance();
                 ResidualSample residualSample;
                 residualSample.query = RadianceQuery::FromIntersection(its, -ray.direction, nBounces);
                 residualSample.prediction = cachedRadiance;
@@ -159,8 +286,34 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                 stats.addResidualSample();
             }
 
-            L += throughput * cachedRadiance;
-            break;
+            if (!collectTrainingSamples &&
+                usedCachedRadiance &&
+                settings.pathTraceBlend > 0.0) {
+                traceTargetRadiance();
+                if (hasTargetRadiance) {
+                    double targetWeight = std::min(1.0, std::max(0.0, settings.pathTraceBlend));
+                    cachedRadiance = cachedRadiance * (1.0 - targetWeight) + targetRadiance * targetWeight;
+                }
+            }
+
+            if (!collectTrainingSamples &&
+                usedCachedRadiance &&
+                residualCorrector &&
+                settings.residualProbability > 0.0 &&
+                sampler->sample1D() < settings.residualProbability) {
+                traceTargetRadiance();
+                if (hasTargetRadiance) {
+                    cachedRadiance += (targetRadiance - cachedRadiance) / settings.residualProbability;
+                    stats.addResidualSample();
+                }
+            }
+
+            if (usedCachedRadiance) {
+                L += throughput * cachedRadiance;
+            }
+            if (usedCachedRadiance || collectTrainingSamples) {
+                break;
+            }
         }
 
         PathIntegratorLocalRecord sampleScatterRecord = sampleScatter(its, ray);
