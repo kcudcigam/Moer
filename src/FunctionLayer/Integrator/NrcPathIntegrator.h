@@ -49,11 +49,21 @@ private:
                         int passSpp,
                         bool depositToFilm,
                         bool collectTrainingSamples,
+                        bool collectResidualSamples,
                         bool useCachedRadiance);
-    Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene);
+    PathIntegratorLocalRecord sampleDirectLightingLocal(std::shared_ptr<Scene> scene,
+                                                        const Intersection &its,
+                                                        const Ray &ray,
+                                                        Sampler &localSampler);
+    PathIntegratorLocalRecord sampleScatterLocal(const Intersection &its,
+                                                 const Ray &ray,
+                                                 Sampler &localSampler);
+    Spectrum traceContinuation(const Ray &ray, std::shared_ptr<Scene> scene, Sampler &localSampler);
     Spectrum LiInternal(const Ray &initialRay,
                         std::shared_ptr<Scene> scene,
+                        Sampler &localSampler,
                         bool enableEstimator,
                         bool collectTrainingSamples,
+                        bool collectResidualSamples,
                         bool useCachedRadiance);
 };
