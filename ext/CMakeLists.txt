@@ -193,3 +193,23 @@ if(NOT TARGET autodiff)
     target_include_directories(${TARGET_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/autodiff)
     set_ide_folder(autodiff ${3DPARTY_FOLDER})
 endif()
+
+if(ENABLE_TCNN_NRC AND NOT TARGET tiny-cuda-nn)
+    message(STATUS "============start config tiny-cuda-nn============")
+    set(TCNN_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(TCNN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(TCNN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(TCNN_BUILD_WITH_RTC ON CACHE BOOL "" FORCE)
+    set(TCNN_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "" FORCE)
+
+    FetchContent_Declare(
+        tiny-cuda-nn
+        GIT_REPOSITORY https://github.com/NVlabs/tiny-cuda-nn.git
+        GIT_TAG 749dd70c5afc5a9dadb85e5652ed65d55e0ba187
+        GIT_PROGRESS TRUE
+        GIT_SUBMODULES_RECURSE TRUE
+    )
+    FetchContent_MakeAvailable(tiny-cuda-nn)
+    target_link_libraries(${TARGET_NAME} PUBLIC tiny-cuda-nn)
+    set_ide_folder(tiny-cuda-nn ${3DPARTY_FOLDER}/tiny-cuda-nn)
+endif()

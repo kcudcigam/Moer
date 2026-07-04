@@ -1,6 +1,8 @@
 #include <iostream>
+#include <fstream>
 
 #include "FunctionLayer/Integrator/PathIntegrator-new.h"
+#include "FunctionLayer/Integrator/NrcPathIntegrator.h"
 #include "FunctionLayer/Integrator/NormalIntegrator.h"
 #include "FunctionLayer/Integrator/VolPathIntegrator.h"
 #include "FunctionLayer/Sampler/Halton.h"
@@ -12,9 +14,14 @@
 struct RenderSettings {
     int spp;
     std::string outputPath;
+    std::string integrator;
+    NrcSettings nrcSettings;
+
     RenderSettings(const Json &json) {
         spp = getOptional(json, "spp", 32);
         outputPath = getOptional(json, "output_file", std::string("image"));
+        integrator = getOptional(json, "integrator", std::string("vol_path"));
+        nrcSettings = NrcSettings::FromJson(getChild(json, "nrc"));
     }
 };
 
@@ -50,12 +57,26 @@ public:
         settings = new RenderSettings(settingsJson);
         auto camera = CameraFactory::LoadCameraFromJson(sceneJson["camera"]);
         Point2i resolution = getOptional(sceneJson["camera"], "resolution", Point2i(512, 512));
-        VolPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
-                                     std::make_unique<SequenceTileGenerator>(resolution), std::make_shared<IndependentSampler>(settings->spp, 5), settings->spp, 12);
-
         std::cout << "start rendering" << std::endl;
-        integrator.render(scene);
-        integrator.save(settings->outputPath);
+        if (settings->integrator == "nrc_path") {
+            NrcPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
+                                         std::make_unique<SequenceTileGenerator>(resolution),
+                                         std::make_shared<IndependentSampler>(settings->spp, 5),
+                                         settings->spp, settings->nrcSettings, 12);
+            integrator.render(scene);
+            integrator.save(settings->outputPath);
+            integrator.writeStats(settings->outputPath + ".stats.csv");
+        } else {
+            VolPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
+                                         std::make_unique<SequenceTileGenerator>(resolution),
+                                         std::make_shared<IndependentSampler>(settings->spp, 5),
+                                         settings->spp, 12);
+            integrator.render(scene);
+            integrator.save(settings->outputPath);
+            std::ofstream statsFile(settings->outputPath + ".stats.csv");
+            statsFile << "query_count,training_samples,train_calls,nrc_query_seconds,nrc_train_seconds,target_trace_seconds,cacheable_hits,estimator_blocks\n";
+            statsFile << "0,0,0,0,0,0,0,0\n";
+        }
         std::cout << "finish" << std::endl;
         renderClock.Done();
     }
@@ -70,4 +91,5 @@ int main(int argc, const char *argv[]) {
     for (int i = 1; i < argc; ++i) {
         Render::RenderScene(argv[i]);
     }
+    return 0;
 }
