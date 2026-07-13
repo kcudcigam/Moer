@@ -21,10 +21,7 @@
 
 namespace {
 
-constexpr uint32_t kPaperInputDims = 10;
-constexpr uint32_t kLegacyInputDims = 15;
 constexpr uint32_t kLegacyPlusInputDims = 18;
-constexpr uint32_t kLegacyPlusViewInputDims = 19;
 constexpr uint32_t kOutputDims = 3;
 constexpr uint32_t kBatchSize = 1024;
 constexpr float kDefaultRadianceScale = 1.0f;
@@ -36,39 +33,6 @@ struct PositionNormalizer {
     float extent[3] = {20.0f, 20.0f, 20.0f};
 };
 
-enum class TcnnInputEncoding {
-    Paper,
-    Legacy,
-    LegacyPlus,
-    LegacyPlusView
-};
-
-TcnnInputEncoding parseInputEncoding(const std::string &name) {
-    if (name == "paper") {
-        return TcnnInputEncoding::Paper;
-    }
-    if (name == "legacy_plus_view") {
-        return TcnnInputEncoding::LegacyPlusView;
-    }
-    if (name == "legacy_plus") {
-        return TcnnInputEncoding::LegacyPlus;
-    }
-    return TcnnInputEncoding::Legacy;
-}
-
-int inputEncodingId(TcnnInputEncoding encoding) {
-    if (encoding == TcnnInputEncoding::Paper) {
-        return 3;
-    }
-    if (encoding == TcnnInputEncoding::LegacyPlus) {
-        return 1;
-    }
-    if (encoding == TcnnInputEncoding::LegacyPlusView) {
-        return 2;
-    }
-    return 0;
-}
-
 float clampFinite(double value, double minValue, double maxValue) {
     if (!std::isfinite(value)) {
         return 0.0f;
@@ -76,20 +40,7 @@ float clampFinite(double value, double minValue, double maxValue) {
     return static_cast<float>(std::max(minValue, std::min(maxValue, value)));
 }
 
-void encodePaperQuery(const RadianceQuery &query, const PositionNormalizer &positionNormalizer, float *out) {
-    out[0] = clampFinite((query.position.x - positionNormalizer.center[0]) / positionNormalizer.extent[0] + 0.5, 0.0, 1.0);
-    out[1] = clampFinite((query.position.y - positionNormalizer.center[1]) / positionNormalizer.extent[1] + 0.5, 0.0, 1.0);
-    out[2] = clampFinite((query.position.z - positionNormalizer.center[2]) / positionNormalizer.extent[2] + 0.5, 0.0, 1.0);
-    out[3] = clampFinite(query.normal.x * 0.5 + 0.5, 0.0, 1.0);
-    out[4] = clampFinite(query.normal.y * 0.5 + 0.5, 0.0, 1.0);
-    out[5] = clampFinite(query.normal.z * 0.5 + 0.5, 0.0, 1.0);
-    out[6] = clampFinite(query.outgoing.x * 0.5 + 0.5, 0.0, 1.0);
-    out[7] = clampFinite(query.outgoing.y * 0.5 + 0.5, 0.0, 1.0);
-    out[8] = clampFinite(query.outgoing.z * 0.5 + 0.5, 0.0, 1.0);
-    out[9] = clampFinite(query.bounce / 16.0, 0.0, 1.0);
-}
-
-void encodeLegacyQuery(const RadianceQuery &query, const PositionNormalizer &positionNormalizer, float *out) {
+void encodeQuery(const RadianceQuery &query, const PositionNormalizer &positionNormalizer, float *out) {
     out[0] = clampFinite((query.position.x - positionNormalizer.center[0]) / positionNormalizer.extent[0] + 0.5, 0.0, 1.0);
     out[1] = clampFinite((query.position.y - positionNormalizer.center[1]) / positionNormalizer.extent[1] + 0.5, 0.0, 1.0);
     out[2] = clampFinite((query.position.z - positionNormalizer.center[2]) / positionNormalizer.extent[2] + 0.5, 0.0, 1.0);
@@ -105,33 +56,9 @@ void encodeLegacyQuery(const RadianceQuery &query, const PositionNormalizer &pos
     out[12] = clampFinite(query.roughness, 0.0, 1.0);
     out[13] = clampFinite(query.materialType / 32.0, 0.0, 1.0);
     out[14] = clampFinite(query.bounce / 16.0, 0.0, 1.0);
-}
-
-void encodeLegacyPlusQuery(const RadianceQuery &query, const PositionNormalizer &positionNormalizer, float *out) {
-    encodeLegacyQuery(query, positionNormalizer, out);
     out[15] = clampFinite(query.specular[0], 0.0, 1.0);
     out[16] = clampFinite(query.specular[1], 0.0, 1.0);
     out[17] = clampFinite(query.specular[2], 0.0, 1.0);
-}
-
-void encodeLegacyPlusViewQuery(const RadianceQuery &query, const PositionNormalizer &positionNormalizer, float *out) {
-    encodeLegacyPlusQuery(query, positionNormalizer, out);
-    out[18] = clampFinite(query.viewCos, 0.0, 1.0);
-}
-
-void encodeQuery(const RadianceQuery &query,
-                 const PositionNormalizer &positionNormalizer,
-                 TcnnInputEncoding encoding,
-                 float *out) {
-    if (encoding == TcnnInputEncoding::Paper) {
-        encodePaperQuery(query, positionNormalizer, out);
-    } else if (encoding == TcnnInputEncoding::LegacyPlusView) {
-        encodeLegacyPlusViewQuery(query, positionNormalizer, out);
-    } else if (encoding == TcnnInputEncoding::LegacyPlus) {
-        encodeLegacyPlusQuery(query, positionNormalizer, out);
-    } else {
-        encodeLegacyQuery(query, positionNormalizer, out);
-    }
 }
 
 void encodeTarget(const Spectrum &target, float scale, float *out) {
@@ -188,9 +115,7 @@ struct TcnnDiagnostics {
     size_t sampleCount = 0;
     size_t observedSampleCount = 0;
     int trainSteps = 0;
-    int inputDims = kLegacyInputDims;
-    int inputEncoding = 0;
-    int querySemantics = 0;
+    int inputDims = kLegacyPlusInputDims;
     int relativeLoss = 0;
     int weightedSampleTraining = 0;
     double targetLuminanceClamp = 0.0;
@@ -235,17 +160,11 @@ class TcnnRadianceCache final : public INeuralRadianceCache {
 public:
     explicit TcnnRadianceCache(const NrcSettings &settings)
         : capacity(settings.maxTrainingSamples),
-          inputEncoding(parseInputEncoding(settings.tcnnEncoding)),
-          inputDims(inputEncoding == TcnnInputEncoding::Paper
-                        ? kPaperInputDims
-                        : (inputEncoding == TcnnInputEncoding::LegacyPlusView
-                               ? kLegacyPlusViewInputDims
-                               : (inputEncoding == TcnnInputEncoding::LegacyPlus ? kLegacyPlusInputDims : kLegacyInputDims))),
+          inputDims(kLegacyPlusInputDims),
           useRelativeTarget(settings.tcnnRelativeTarget),
           weightedSampleTraining(settings.tcnnWeightedSampleTraining),
           trainingWeightClamp(settings.tcnnTrainingWeightClamp),
           targetLuminanceClamp(settings.targetLuminanceClamp),
-          querySemantics(settings.querySemanticsId()),
           queryBatchSize(tcnn::next_multiple(1u, tcnn::BATCH_SIZE_GRANULARITY)),
           queryHostInput(queryBatchSize * inputDims, 0.0f),
           queryHostOutput(queryBatchSize * kOutputDims, 0.0f),
@@ -334,8 +253,6 @@ public:
         nextDiagnostics.observedSampleCount = observedSampleCount;
         nextDiagnostics.trainSteps = steps;
         nextDiagnostics.inputDims = static_cast<int>(inputDims);
-        nextDiagnostics.inputEncoding = inputEncodingId(inputEncoding);
-        nextDiagnostics.querySemantics = querySemantics;
         nextDiagnostics.relativeLoss = useRelativeTarget ? 1 : 0;
         nextDiagnostics.weightedSampleTraining = weightedSampleTraining ? 1 : 0;
         nextDiagnostics.targetLuminanceClamp = targetLuminanceClamp;
@@ -363,7 +280,7 @@ public:
                     ? sampleWeightedTrainingIndex(cumulativeTrainingWeights, totalTrainingWeight)
                     : (trainCursor + j) % samples.size();
                 const RadianceSample &sample = samples[sampleIndex];
-                encodeQuery(sample.query, positionNormalizer, inputEncoding, hostInput.data() + j * inputDims);
+                encodeQuery(sample.query, positionNormalizer, hostInput.data() + j * inputDims);
                 encodeTarget(trainingRadiance(sample),
                              targetScale,
                              hostTarget.data() + j * kOutputDims);
@@ -396,7 +313,7 @@ public:
         }
         uint32_t batchSize = tcnn::next_multiple(1u, tcnn::BATCH_SIZE_GRANULARITY);
         std::fill(queryHostInput.begin(), queryHostInput.end(), 0.0f);
-        encodeQuery(query, positionNormalizer, inputEncoding, queryHostInput.data());
+        encodeQuery(query, positionNormalizer, queryHostInput.data());
         queryInputMemory.copy_from_host(queryHostInput);
 
         tcnn::GPUMatrix<float> input(queryInputMemory.data(), inputDims, batchSize);
@@ -426,7 +343,7 @@ public:
         std::vector<float> hostInput(batchSize * inputDims, 0.0f);
         std::vector<float> hostOutput(batchSize * kOutputDims, 0.0f);
         for (size_t i = 0; i < queries.size(); ++i) {
-            encodeQuery(queries[i], positionNormalizer, inputEncoding, hostInput.data() + i * inputDims);
+            encodeQuery(queries[i], positionNormalizer, hostInput.data() + i * inputDims);
         }
 
         tcnn::GPUMemory<float> inputMemory(hostInput.size());
@@ -460,8 +377,6 @@ public:
         file << "observed_sample_count," << diagnostics.observedSampleCount << "\n";
         file << "train_steps," << diagnostics.trainSteps << "\n";
         file << "input_dims," << diagnostics.inputDims << "\n";
-        file << "input_encoding," << diagnostics.inputEncoding << "\n";
-        file << "query_semantics," << diagnostics.querySemantics << "\n";
         file << "relative_loss," << diagnostics.relativeLoss << "\n";
         file << "weighted_sample_training," << diagnostics.weightedSampleTraining << "\n";
         file << "target_luminance_clamp," << diagnostics.targetLuminanceClamp << "\n";
@@ -663,7 +578,7 @@ private:
         bins.reserve(samples.size());
         std::vector<float> encoded(inputDims, 0.0f);
         for (const auto &sample : samples) {
-            encodeQuery(sample.query, positionNormalizer, inputEncoding, encoded.data());
+            encodeQuery(sample.query, positionNormalizer, encoded.data());
             std::string key;
             key.resize(inputDims);
             for (uint32_t d = 0; d < inputDims; ++d) {
@@ -717,7 +632,7 @@ private:
                 ? static_cast<size_t>(i)
                 : static_cast<size_t>((static_cast<uint64_t>(i) * samples.size()) / requested);
             const RadianceSample &sample = samples[index];
-            encodeQuery(sample.query, positionNormalizer, inputEncoding, hostInput.data() + i * inputDims);
+            encodeQuery(sample.query, positionNormalizer, hostInput.data() + i * inputDims);
             encodeTarget(trainingRadiance(sample),
                          targetScale,
                          hostTarget.data() + i * kOutputDims);
@@ -785,13 +700,11 @@ private:
     }
 
     size_t capacity;
-    TcnnInputEncoding inputEncoding = TcnnInputEncoding::Legacy;
-    uint32_t inputDims = kLegacyInputDims;
+    uint32_t inputDims = kLegacyPlusInputDims;
     bool useRelativeTarget = false;
     bool weightedSampleTraining = false;
     double trainingWeightClamp = 8.0;
     double targetLuminanceClamp = 0.0;
-    int querySemantics = 0;
     mutable std::mutex mutex;
     std::vector<RadianceSample> samples;
     size_t trainCursor = 0;

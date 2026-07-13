@@ -24,7 +24,7 @@ RESULTS = REPO / "results" / "nrc_report_final"
 def nrc_base():
     return {
         "mode": "nrc",
-        "query_bounce": 1,
+        "query_bounce": 2,
         "train_steps": 0,
         "train_batch_size": 512,
         "training_spp": 24,
@@ -32,8 +32,7 @@ def nrc_base():
         "final_train_epochs": 32.0,
         "freeze_after_training": True,
         "cache_non_diffuse_surfaces": True,
-        "target_samples": 8,
-        "tcnn_encoding": "legacy_plus",
+        "target_samples": 4,
         "tcnn_hidden_layers": 2,
         "tcnn_relative_target": True,
         "tcnn_weighted_sample_training": True,
@@ -67,20 +66,11 @@ REPORT_SCENES = [
 
 def methods_for_report(reference_spp=128, include_variants=True, resolution=(1024, 576)):
     best = scaled_nrc_for_resolution(resolution)
-    plus_view = dict(best)
-    plus_view["tcnn_encoding"] = "legacy_plus_view"
-    more_train = dict(best)
-    more_train["final_train_epochs"] = 3.0
     methods = [
         ("path_low", 4, {"mode": "path_trace", "query_bounce": 1}),
         ("path_mid", 32, {"mode": "path_trace", "query_bounce": 1}),
         ("nrc_best", 48, best),
     ]
-    if include_variants:
-        methods.extend([
-            ("nrc_plus_view", 48, plus_view),
-            ("nrc_more_train", 48, more_train),
-        ])
     methods.append(("path_reference", reference_spp, {"mode": "path_trace", "query_bounce": 1}))
     return methods
 
@@ -88,7 +78,7 @@ def methods_for_report(reference_spp=128, include_variants=True, resolution=(102
 def ablation_methods():
     base = {
         "mode": "nrc",
-        "query_bounce": 1,
+        "query_bounce": 2,
         "train_steps": 0,
         "train_batch_size": 512,
         "training_spp": 8,
@@ -96,7 +86,6 @@ def ablation_methods():
         "freeze_after_training": True,
         "cache_non_diffuse_surfaces": True,
         "target_samples": 1,
-        "tcnn_encoding": "legacy",
         "tcnn_hidden_layers": 2,
         "tcnn_relative_target": False,
         "tcnn_weighted_sample_training": False,
@@ -106,8 +95,7 @@ def ablation_methods():
         "count_zero_target_samples": False,
         "target_luminance_clamp": 0.0,
     }
-    legacy_plus = dict(base, tcnn_encoding="legacy_plus")
-    batch = dict(legacy_plus, use_batch_query=True)
+    batch = dict(base, use_batch_query=True)
     avg = dict(batch, target_samples=4)
     rel = dict(avg, tcnn_relative_target=True)
     weighted = dict(rel, tcnn_weighted_sample_training=True, tcnn_training_weight_clamp=8.0)
@@ -123,14 +111,13 @@ def ablation_methods():
         ("path_low", 2, {"mode": "path_trace", "query_bounce": 1}),
         ("path_reference", 32, {"mode": "path_trace", "query_bounce": 1}),
         ("nrc_00_basic", 2, base),
-        ("nrc_01_input_plus", 2, legacy_plus),
-        ("nrc_02_batch_query", 2, batch),
-        ("nrc_03_target_avg4", 2, avg),
-        ("nrc_04_relative_loss", 2, rel),
-        ("nrc_05_weighted", 2, weighted),
-        ("nrc_06_zero_targets", 2, zero),
-        ("nrc_07_lum_clamp", 2, clamp),
-        ("nrc_08_best_training", 48, more),
+        ("nrc_01_batch_query", 2, batch),
+        ("nrc_02_target_avg4", 2, avg),
+        ("nrc_03_relative_loss", 2, rel),
+        ("nrc_04_weighted", 2, weighted),
+        ("nrc_05_zero_targets", 2, zero),
+        ("nrc_06_lum_clamp", 2, clamp),
+        ("nrc_07_best_training", 48, more),
     ]
 
 
@@ -345,7 +332,7 @@ def render_suite(suite, run_root, timeout):
             rows.append(row)
 
         ordered = [m[0] for m in methods if m[0] in png_by_scene[scene_name]]
-        important = [m for m in ["path_low", "nrc_best", "nrc_more_train", "path_reference"] if m in ordered]
+        important = [m for m in ["path_low", "nrc_best", "path_reference"] if m in ordered]
         if len(important) >= 2:
             make_comparison(
                 scene_name,
@@ -432,14 +419,16 @@ def main():
         smoke_methods = [
             ("path_low", 1, {"mode": "path_trace", "query_bounce": 1}),
             ("nrc_best", 1, dict(nrc_base(),
-                                  training_spp=2,
-                                  final_train_steps=64,
+                                  query_bounce=1,
+                                  training_spp=1,
+                                  final_train_steps=1,
                                   final_train_epochs=0.0,
-                                  target_samples=2,
-                                  max_training_samples=8192)),
-            ("path_reference", 2, {"mode": "path_trace", "query_bounce": 1}),
+                                  target_samples=1,
+                                  min_training_samples_before_query=1,
+                                  max_training_samples=512)),
+            ("path_reference", 1, {"mode": "path_trace", "query_bounce": 1}),
         ]
-        suite = [(name, path, (256, 144), smoke_methods) for name, path, _ in REPORT_SCENES[:3]]
+        suite = [("testball", "scenes/testball", (32, 18), smoke_methods)]
     elif args.suite == "ablation":
         suite = [("testball", "scenes/testball", (512, 288), ablation_methods()),
                  ("teapot", "scenes/teapot", (512, 288), ablation_methods())]

@@ -227,7 +227,7 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
     double primarySpread = 0.0;
     double pathSpread = 0.0;
     double previousScatterPdf = 1.0;
-    bool postScatterQueryReady = settings.querySemantics == NrcQuerySemantics::CurrentVertex;
+    bool postScatterQueryReady = false;
     auto itsOpt = scene->intersect(ray);
 
     while (true) {
@@ -325,8 +325,7 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
                 return false;
             }
             previousScatterPdf = sampleScatterRecord.pdf;
-            if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
-                nBounces >= settings.queryBounce) {
+            if (nBounces >= settings.queryBounce) {
                 postScatterQueryReady = true;
             }
         } else {
@@ -476,7 +475,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
     double primarySpread = 0.0;
     double pathSpread = 0.0;
     double previousScatterPdf = 1.0;
-    bool postScatterQueryReady = settings.querySemantics == NrcQuerySemantics::CurrentVertex;
+    bool postScatterQueryReady = false;
     auto itsOpt = scene->intersect(ray);
 
     while (true) {
@@ -639,8 +638,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                 break;
             }
             previousScatterPdf = sampleScatterRecord.pdf;
-            if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
-                nBounces >= settings.queryBounce) {
+            if (nBounces >= settings.queryBounce) {
                 postScatterQueryReady = true;
             }
         } else {

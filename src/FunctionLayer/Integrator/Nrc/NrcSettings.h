@@ -9,33 +9,26 @@ enum class NrcMode {
     Tcnn
 };
 
-enum class NrcQuerySemantics {
-    CurrentVertex,
-    PostScatter
-};
-
 struct NrcSettings {
     NrcMode mode = NrcMode::PathTrace;
-    NrcQuerySemantics querySemantics = NrcQuerySemantics::CurrentVertex;
     int queryBounce = 2;
     int trainStepsPerRender = 0;
-    int trainBatchSize = 1;
-    int trainingSpp = 0;
-    int finalTrainSteps = 0;
-    double finalTrainEpochs = 0.0;
-    int minTrainingSamplesBeforeQuery = 0;
-    int maxTrainingSamples = 1 << 16;
-    double targetLuminanceClamp = 0.0;
-    bool freezeAfterTraining = false;
-    bool cacheNonDiffuseSurfaces = false;
-    int targetSamples = 1;
-    std::string tcnnEncoding = "legacy";
+    int trainBatchSize = 512;
+    int trainingSpp = 24;
+    int finalTrainSteps = 4096;
+    double finalTrainEpochs = 32.0;
+    int minTrainingSamplesBeforeQuery = 1024;
+    int maxTrainingSamples = 524288;
+    double targetLuminanceClamp = 8.0;
+    bool freezeAfterTraining = true;
+    bool cacheNonDiffuseSurfaces = true;
+    int targetSamples = 4;
     int tcnnHiddenLayers = 2;
-    bool tcnnRelativeTarget = false;
-    bool tcnnWeightedSampleTraining = false;
+    bool tcnnRelativeTarget = true;
+    bool tcnnWeightedSampleTraining = true;
     double tcnnTrainingWeightClamp = 8.0;
     bool useBatchQuery = true;
-    bool countZeroTargetSamples = false;
+    bool countZeroTargetSamples = true;
 
     static NrcSettings FromJson(const Json &json) {
         NrcSettings settings;
@@ -44,12 +37,6 @@ struct NrcSettings {
             settings.mode = NrcMode::Tcnn;
         } else {
             settings.mode = NrcMode::PathTrace;
-        }
-        std::string querySemanticsText = getOptional(json, "query_semantics", std::string("current_vertex"));
-        if (querySemanticsText == "post_scatter") {
-            settings.querySemantics = NrcQuerySemantics::PostScatter;
-        } else {
-            settings.querySemantics = NrcQuerySemantics::CurrentVertex;
         }
         settings.queryBounce = getOptional(json, "query_bounce", settings.queryBounce);
         settings.trainStepsPerRender = getOptional(json, "train_steps", settings.trainStepsPerRender);
@@ -63,7 +50,6 @@ struct NrcSettings {
         settings.freezeAfterTraining = getOptional(json, "freeze_after_training", settings.freezeAfterTraining);
         settings.cacheNonDiffuseSurfaces = getOptional(json, "cache_non_diffuse_surfaces", settings.cacheNonDiffuseSurfaces);
         settings.targetSamples = getOptional(json, "target_samples", settings.targetSamples);
-        settings.tcnnEncoding = getOptional(json, "tcnn_encoding", settings.tcnnEncoding);
         settings.tcnnHiddenLayers = getOptional(json, "tcnn_hidden_layers", settings.tcnnHiddenLayers);
         settings.tcnnRelativeTarget = getOptional(json, "tcnn_relative_target", settings.tcnnRelativeTarget);
         settings.tcnnWeightedSampleTraining = getOptional(json, "tcnn_weighted_sample_training", settings.tcnnWeightedSampleTraining);
@@ -71,9 +57,5 @@ struct NrcSettings {
         settings.useBatchQuery = getOptional(json, "use_batch_query", settings.useBatchQuery);
         settings.countZeroTargetSamples = getOptional(json, "count_zero_target_samples", settings.countZeroTargetSamples);
         return settings;
-    }
-
-    int querySemanticsId() const {
-        return querySemantics == NrcQuerySemantics::PostScatter ? 1 : 0;
     }
 };
