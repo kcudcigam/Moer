@@ -98,6 +98,17 @@ Spectrum NrcPathIntegrator::traceContinuation(const Ray &ray,
     return LiInternal(ray, scene, localSampler, false, false, false);
 }
 
+namespace {
+bool isFiniteSpectrum(const Spectrum &s) {
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(s[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+}
+
 Spectrum NrcPathIntegrator::Li(const Ray &initialRay, std::shared_ptr<Scene> scene) {
     return LiInternal(initialRay, scene, *sampler, true, true, true);
 }
@@ -221,8 +232,10 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
 
     while (true) {
         if (nBounces == 0) {
-            PathIntegratorLocalRecord evalLightRecord = evalEmittance(scene, itsOpt, ray);
-            L += throughput * evalLightRecord.f;
+            if (!itsOpt.has_value()) {
+                PathIntegratorLocalRecord evalLightRecord = evalEnvLights(scene, ray);
+                L += throughput * evalLightRecord.f;
+            }
         }
 
         if (!itsOpt.has_value()) {
@@ -249,6 +262,11 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
         }
 
         auto bxdf = its.material->getBxDF(its);
+        if (!bxdf) {
+            work.pixel = pixel;
+            work.radiance = L;
+            return false;
+        }
         if (bxdf->isNull()) {
             nBounces--;
             ray = Ray{its.position + ray.direction * eps, ray.direction};
@@ -268,7 +286,7 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
             PathIntegratorLocalRecord sampleLightRecord = sampleDirectLightingLocal(scene, its, ray, localSampler);
             PathIntegratorLocalRecord evalScatterRecord = evalScatter(its, ray, sampleLightRecord.wi);
 
-            if (!sampleLightRecord.f.isBlack()) {
+            if (!sampleLightRecord.f.isBlack() && sampleLightRecord.pdf > 0.0) {
                 double misw = MISWeight(sampleLightRecord.pdf, evalScatterRecord.pdf);
                 if (sampleLightRecord.isDelta) {
                     misw = 1.0;
@@ -297,8 +315,15 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
         }
 
         PathIntegratorLocalRecord sampleScatterRecord = sampleScatterLocal(its, ray, localSampler);
-        if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+        if (!sampleScatterRecord.f.isBlack() &&
+            sampleScatterRecord.pdf > 0.0 &&
+            isFiniteSpectrum(sampleScatterRecord.f)) {
             throughput *= sampleScatterRecord.f / sampleScatterRecord.pdf;
+            if (!isFiniteSpectrum(throughput)) {
+                work.pixel = pixel;
+                work.radiance = L;
+                return false;
+            }
             previousScatterPdf = sampleScatterRecord.pdf;
             if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
                 nBounces >= settings.queryBounce) {
@@ -313,13 +338,15 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
         ray = Ray{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
         itsOpt = scene->intersect(ray);
 
-        auto evalLightRecord = evalEmittance(scene, itsOpt, ray);
-        if (!evalLightRecord.f.isBlack()) {
-            double misw = MISWeight(sampleScatterRecord.pdf, evalLightRecord.pdf);
-            if (sampleScatterRecord.isDelta) {
-                misw = 1.0;
+        if (!itsOpt.has_value()) {
+            auto evalLightRecord = evalEnvLights(scene, ray);
+            if (!evalLightRecord.f.isBlack()) {
+                double misw = MISWeight(sampleScatterRecord.pdf, evalLightRecord.pdf);
+                if (sampleScatterRecord.isDelta) {
+                    misw = 1.0;
+                }
+                L += throughput * evalLightRecord.f * misw;
             }
-            L += throughput * evalLightRecord.f * misw;
         }
     }
 }
@@ -454,8 +481,10 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
 
     while (true) {
         if (nBounces == 0) {
-            PathIntegratorLocalRecord evalLightRecord = evalEmittance(scene, itsOpt, ray);
-            L += throughput * evalLightRecord.f;
+            if (!itsOpt.has_value()) {
+                PathIntegratorLocalRecord evalLightRecord = evalEnvLights(scene, ray);
+                L += throughput * evalLightRecord.f;
+            }
         }
 
         if (!itsOpt.has_value()) {
@@ -479,6 +508,9 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
         }
 
         auto bxdf = its.material->getBxDF(its);
+        if (!bxdf) {
+            break;
+        }
         if (bxdf->isNull()) {
             nBounces--;
             ray = Ray{its.position + ray.direction * eps, ray.direction};
@@ -496,7 +528,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             PathIntegratorLocalRecord sampleLightRecord = sampleDirectLightingLocal(scene, its, ray, localSampler);
             PathIntegratorLocalRecord evalScatterRecord = evalScatter(its, ray, sampleLightRecord.wi);
 
-            if (!sampleLightRecord.f.isBlack()) {
+            if (!sampleLightRecord.f.isBlack() && sampleLightRecord.pdf > 0.0) {
                 double misw = MISWeight(sampleLightRecord.pdf, evalScatterRecord.pdf);
                 if (sampleLightRecord.isDelta) {
                     misw = 1.0;
@@ -599,8 +631,13 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
         }
 
         PathIntegratorLocalRecord sampleScatterRecord = sampleScatterLocal(its, ray, localSampler);
-        if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
+        if (!sampleScatterRecord.f.isBlack() &&
+            sampleScatterRecord.pdf > 0.0 &&
+            isFiniteSpectrum(sampleScatterRecord.f)) {
             throughput *= sampleScatterRecord.f / sampleScatterRecord.pdf;
+            if (!isFiniteSpectrum(throughput)) {
+                break;
+            }
             previousScatterPdf = sampleScatterRecord.pdf;
             if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
                 nBounces >= settings.queryBounce) {
@@ -613,14 +650,16 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
         ray = Ray{its.position + sampleScatterRecord.wi * eps, sampleScatterRecord.wi};
         itsOpt = scene->intersect(ray);
 
-        auto evalLightRecord = evalEmittance(scene, itsOpt, ray);
-        if (!evalLightRecord.f.isBlack()) {
-            double misw = MISWeight(sampleScatterRecord.pdf, evalLightRecord.pdf);
-            if (sampleScatterRecord.isDelta) {
-                misw = 1.0;
-            }
+        if (!itsOpt.has_value()) {
+            auto evalLightRecord = evalEnvLights(scene, ray);
+            if (!evalLightRecord.f.isBlack()) {
+                double misw = MISWeight(sampleScatterRecord.pdf, evalLightRecord.pdf);
+                if (sampleScatterRecord.isDelta) {
+                    misw = 1.0;
+                }
 
-            L += throughput * evalLightRecord.f * misw;
+                L += throughput * evalLightRecord.f * misw;
+            }
         }
     }
 

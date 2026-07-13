@@ -13,12 +13,14 @@
 
 struct RenderSettings {
     int spp;
+    int renderThreads;
     std::string outputPath;
     std::string integrator;
     NrcSettings nrcSettings;
 
     RenderSettings(const Json &json) {
         spp = getOptional(json, "spp", 32);
+        renderThreads = getOptional(json, "render_threads", 12);
         outputPath = getOptional(json, "output_file", std::string("image"));
         integrator = getOptional(json, "integrator", std::string("vol_path"));
         nrcSettings = NrcSettings::FromJson(getChild(json, "nrc"));
@@ -62,7 +64,7 @@ public:
             auto *integrator = new NrcPathIntegrator(camera, std::make_unique<Film>(resolution, 3),
                                                      std::make_unique<SequenceTileGenerator>(resolution),
                                                      std::make_shared<IndependentSampler>(settings->spp, 5),
-                                                     settings->spp, settings->nrcSettings, 12);
+                                                     settings->spp, settings->nrcSettings, settings->renderThreads);
             integrator->render(scene);
             integrator->save(settings->outputPath);
             integrator->writeStats(settings->outputPath + ".stats.csv");
@@ -70,7 +72,7 @@ public:
             VolPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
                                          std::make_unique<SequenceTileGenerator>(resolution),
                                          std::make_shared<IndependentSampler>(settings->spp, 5),
-                                         settings->spp, 12);
+                                         settings->spp, settings->renderThreads);
             integrator.render(scene);
             integrator.save(settings->outputPath);
             std::ofstream statsFile(settings->outputPath + ".stats.csv");
