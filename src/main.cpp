@@ -59,13 +59,13 @@ public:
         Point2i resolution = getOptional(sceneJson["camera"], "resolution", Point2i(512, 512));
         std::cout << "start rendering" << std::endl;
         if (settings->integrator == "nrc_path") {
-            NrcPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
-                                         std::make_unique<SequenceTileGenerator>(resolution),
-                                         std::make_shared<IndependentSampler>(settings->spp, 5),
-                                         settings->spp, settings->nrcSettings, 12);
-            integrator.render(scene);
-            integrator.save(settings->outputPath);
-            integrator.writeStats(settings->outputPath + ".stats.csv");
+            auto *integrator = new NrcPathIntegrator(camera, std::make_unique<Film>(resolution, 3),
+                                                     std::make_unique<SequenceTileGenerator>(resolution),
+                                                     std::make_shared<IndependentSampler>(settings->spp, 5),
+                                                     settings->spp, settings->nrcSettings, 12);
+            integrator->render(scene);
+            integrator->save(settings->outputPath);
+            integrator->writeStats(settings->outputPath + ".stats.csv");
         } else {
             VolPathIntegrator integrator(camera, std::make_unique<Film>(resolution, 3),
                                          std::make_unique<SequenceTileGenerator>(resolution),

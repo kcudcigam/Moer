@@ -23,7 +23,7 @@ NrcPathIntegrator::NrcPathIntegrator(std::shared_ptr<Camera> _camera,
                         _spp,
                         _renderThreadNum),
       settings(_settings),
-      radianceCache(CreateRadianceCache(_settings)) {
+      radianceCache(_settings.mode == NrcMode::Tcnn ? CreateRadianceCache(_settings) : nullptr) {
     if (settings.mode == NrcMode::Tcnn) {
         continuationEstimator = std::make_unique<NrcContinuationEstimator>(radianceCache);
     }
@@ -216,6 +216,7 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
     double primarySpread = 0.0;
     double pathSpread = 0.0;
     double previousScatterPdf = 1.0;
+    bool postScatterQueryReady = settings.querySemantics == NrcQuerySemantics::CurrentVertex;
     auto itsOpt = scene->intersect(ray);
 
     while (true) {
@@ -284,6 +285,7 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
         }
         if (settings.mode != NrcMode::PathTrace &&
             cacheableSurface &&
+            postScatterQueryReady &&
             shouldUseContinuationEstimator(nBounces) &&
             shouldQueryCache(nBounces, pathSpread, primarySpread)) {
             stats.addEstimatorBlock();
@@ -298,6 +300,10 @@ bool NrcPathIntegrator::traceToBatchedQuery(const Ray &initialRay,
         if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
             throughput *= sampleScatterRecord.f / sampleScatterRecord.pdf;
             previousScatterPdf = sampleScatterRecord.pdf;
+            if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
+                nBounces >= settings.queryBounce) {
+                postScatterQueryReady = true;
+            }
         } else {
             work.pixel = pixel;
             work.radiance = L;
@@ -443,6 +449,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
     double primarySpread = 0.0;
     double pathSpread = 0.0;
     double previousScatterPdf = 1.0;
+    bool postScatterQueryReady = settings.querySemantics == NrcQuerySemantics::CurrentVertex;
     auto itsOpt = scene->intersect(ray);
 
     while (true) {
@@ -508,6 +515,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             settings.mode != NrcMode::PathTrace &&
             continuationEstimator != nullptr &&
             cacheableSurface &&
+            postScatterQueryReady &&
             shouldQueryCache(nBounces, pathSpread, primarySpread)) {
             stats.addEstimatorBlock();
             ContinuationContext context;
@@ -594,6 +602,10 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
         if (!sampleScatterRecord.f.isBlack() && sampleScatterRecord.pdf != 0) {
             throughput *= sampleScatterRecord.f / sampleScatterRecord.pdf;
             previousScatterPdf = sampleScatterRecord.pdf;
+            if (settings.querySemantics == NrcQuerySemantics::PostScatter &&
+                nBounces >= settings.queryBounce) {
+                postScatterQueryReady = true;
+            }
         } else {
             break;
         }

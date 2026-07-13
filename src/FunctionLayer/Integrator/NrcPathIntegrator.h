@@ -28,7 +28,9 @@ public:
 
     void writeStats(const std::string &path) const {
         stats.writeCsv(path);
-        radianceCache->writeDiagnostics(path + ".cache.csv");
+        if (radianceCache) {
+            radianceCache->writeDiagnostics(path + ".cache.csv");
+        }
     }
 
 private:

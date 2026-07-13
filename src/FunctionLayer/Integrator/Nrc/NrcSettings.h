@@ -9,8 +9,14 @@ enum class NrcMode {
     Tcnn
 };
 
+enum class NrcQuerySemantics {
+    CurrentVertex,
+    PostScatter
+};
+
 struct NrcSettings {
     NrcMode mode = NrcMode::PathTrace;
+    NrcQuerySemantics querySemantics = NrcQuerySemantics::CurrentVertex;
     int queryBounce = 2;
     int trainStepsPerRender = 0;
     int trainBatchSize = 1;
@@ -39,6 +45,12 @@ struct NrcSettings {
         } else {
             settings.mode = NrcMode::PathTrace;
         }
+        std::string querySemanticsText = getOptional(json, "query_semantics", std::string("current_vertex"));
+        if (querySemanticsText == "post_scatter") {
+            settings.querySemantics = NrcQuerySemantics::PostScatter;
+        } else {
+            settings.querySemantics = NrcQuerySemantics::CurrentVertex;
+        }
         settings.queryBounce = getOptional(json, "query_bounce", settings.queryBounce);
         settings.trainStepsPerRender = getOptional(json, "train_steps", settings.trainStepsPerRender);
         settings.trainBatchSize = getOptional(json, "train_batch_size", settings.trainBatchSize);
@@ -59,5 +71,9 @@ struct NrcSettings {
         settings.useBatchQuery = getOptional(json, "use_batch_query", settings.useBatchQuery);
         settings.countZeroTargetSamples = getOptional(json, "count_zero_target_samples", settings.countZeroTargetSamples);
         return settings;
+    }
+
+    int querySemanticsId() const {
+        return querySemantics == NrcQuerySemantics::PostScatter ? 1 : 0;
     }
 };
