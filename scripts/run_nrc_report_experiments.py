@@ -64,12 +64,31 @@ REPORT_SCENES = [
 ]
 
 
-def methods_for_report(reference_spp=128, include_variants=True, resolution=(1024, 576)):
+SCENE_DISPLAY_EXPOSURE = {
+    "classroom": 2.0,
+    "green_bathroom": 1.5,
+}
+
+
+def report_exposure(scene_name):
+    return SCENE_DISPLAY_EXPOSURE.get(scene_name, 1.0)
+
+
+def apply_report_scene_adjustments(scene_name, scene):
+    if scene_name == "green_bathroom":
+        camera = scene.setdefault("camera", {})
+        camera["type"] = "pinhole"
+        camera.pop("aperture_radius", None)
+        camera.pop("focus_distance", None)
+    return scene
+
+
+def methods_for_report(reference_spp=256, include_variants=True, resolution=(1024, 576)):
     best = scaled_nrc_for_resolution(resolution)
     methods = [
         ("path_low", 4, {"mode": "path_trace", "query_bounce": 1}),
-        ("path_mid", 32, {"mode": "path_trace", "query_bounce": 1}),
-        ("nrc_best", 48, best),
+        ("path_equal", 128, {"mode": "path_trace", "query_bounce": 1}),
+        ("nrc_best", 128, best),
     ]
     methods.append(("path_reference", reference_spp, {"mode": "path_trace", "query_bounce": 1}))
     return methods
@@ -157,6 +176,7 @@ def prepare_scene(source_scene, scene_name, method_name, spp, nrc, resolution, r
         scene["camera"]["resolution"] = [resolution[0], resolution[1]]
     else:
         scene.setdefault("camera", {})["resolution"] = [resolution[0], resolution[1]]
+    apply_report_scene_adjustments(scene_name, scene)
     renderer = scene.setdefault("renderer", {})
     renderer["spp"] = spp
     renderer["integrator"] = "nrc_path"
@@ -203,21 +223,22 @@ def read_hdr(path):
     return img[:, :, :3]
 
 
-def report_display_map(img):
+def report_display_map(img, exposure=1.0):
     img = np.maximum(img, 0.0)
+    img = img * exposure
     if float(np.nanmax(img)) > 8.0:
         return np.clip(img / 255.0, 0.0, 1.0)
     mapped = img / (1.0 + img)
     return np.clip(np.power(mapped, 1.0 / 2.2), 0.0, 1.0)
 
 
-def save_png(hdr, png_path):
+def save_png(hdr, png_path, exposure=1.0):
     png_path.parent.mkdir(parents=True, exist_ok=True)
-    ldr = (report_display_map(hdr) * 255.0 + 0.5).astype(np.uint8)
+    ldr = (report_display_map(hdr, exposure) * 255.0 + 0.5).astype(np.uint8)
     Image.fromarray(ldr).save(png_path)
 
 
-def metrics(image, reference):
+def metrics(image, reference, exposure=1.0):
     if image.shape != reference.shape:
         image = cv2.resize(image, (reference.shape[1], reference.shape[0]), interpolation=cv2.INTER_AREA)
     diff = image - reference
@@ -227,8 +248,8 @@ def metrics(image, reference):
     rel_mae = float(np.mean(np.abs(diff) / (np.abs(reference) + 1.0)))
     psnr = float("inf") if mse <= 0 else 10.0 * math.log10((max(1.0, float(np.max(reference))) ** 2) / mse)
 
-    img_ldr = report_display_map(image)
-    ref_ldr = report_display_map(reference)
+    img_ldr = report_display_map(image, exposure)
+    ref_ldr = report_display_map(reference, exposure)
     ldr_mse = float(np.mean((img_ldr - ref_ldr) ** 2))
     ldr_psnr = float("inf") if ldr_mse <= 0 else 10.0 * math.log10(1.0 / ldr_mse)
     ldr_mae = float(np.mean(np.abs(img_ldr - ref_ldr)))
@@ -307,7 +328,7 @@ def render_suite(suite, run_root, timeout):
             hdr = hdr_path(method_dir, method_name)
             image = read_hdr(hdr)
             png = run_root / "png" / scene_name / f"{method_name}.png"
-            save_png(image, png)
+            save_png(image, png, report_exposure(scene_name))
             png_by_scene[scene_name][method_name] = png
             if method_name == "path_reference":
                 refs[scene_name] = image
@@ -325,14 +346,14 @@ def render_suite(suite, run_root, timeout):
                 "spp": spp,
                 "resolution": f"{resolution[0]}x{resolution[1]}",
             }
-            row.update(metrics(image, reference))
+            row.update(metrics(image, reference, report_exposure(scene_name)))
             row["render_seconds"] = timings.get((scene_name, method_name), "")
             row.update({f"stats_{k}": v for k, v in read_csv_key_values(method_dir / f"{method_name}.stats.csv").items()})
             row.update({f"cache_{k}": v for k, v in read_csv_key_values(method_dir / f"{method_name}.stats.csv.cache.csv").items()})
             rows.append(row)
 
         ordered = [m[0] for m in methods if m[0] in png_by_scene[scene_name]]
-        important = [m for m in ["path_low", "nrc_best", "path_reference"] if m in ordered]
+        important = [m for m in ["path_low", "path_equal", "nrc_best", "path_reference"] if m in ordered]
         if len(important) >= 2:
             make_comparison(
                 scene_name,
@@ -340,11 +361,11 @@ def render_suite(suite, run_root, timeout):
                 [png_by_scene[scene_name][m] for m in important],
                 run_root / "comparisons" / f"{scene_name}_comparison.png",
             )
-        if {"path_low", "nrc_best", "path_reference"}.issubset(png_by_scene[scene_name]):
+        if {"path_equal", "nrc_best", "path_reference"}.issubset(png_by_scene[scene_name]):
             make_comparison(
                 scene_name,
-                ["path_low", "nrc_best", "path_reference"],
-                [png_by_scene[scene_name][m] for m in ["path_low", "nrc_best", "path_reference"]],
+                ["path_equal", "nrc_best", "path_reference"],
+                [png_by_scene[scene_name][m] for m in ["path_equal", "nrc_best", "path_reference"]],
                 run_root / "comparisons" / f"{scene_name}_triple.png",
             )
     return rows
@@ -451,6 +472,12 @@ def main():
     write_json(run_root / "experiment_plan.json", {
         "suite": args.suite,
         "commit": git_commit(),
+        "scene_display_exposure": {
+            name: report_exposure(name) for name, _, _, _ in suite
+        },
+        "scene_adjustments": {
+            "green_bathroom": "Use a pinhole camera for report renders to remove the original thin-lens defocus blur."
+        },
         "scenes": [
             {"name": name, "path": path, "resolution": res, "methods": [m[0] for m in methods]}
             for name, path, res, methods in suite
