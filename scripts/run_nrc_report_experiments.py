@@ -87,6 +87,7 @@ def methods_for_report(reference_spp=256, include_variants=True, resolution=(102
     best = scaled_nrc_for_resolution(resolution)
     methods = [
         ("path_low", 4, {"mode": "path_trace", "query_bounce": 1}),
+        ("path_visual", 32, {"mode": "path_trace", "query_bounce": 1}),
         ("path_equal", 128, {"mode": "path_trace", "query_bounce": 1}),
         ("nrc_best", 128, best),
     ]
@@ -353,7 +354,7 @@ def render_suite(suite, run_root, timeout):
             rows.append(row)
 
         ordered = [m[0] for m in methods if m[0] in png_by_scene[scene_name]]
-        important = [m for m in ["path_low", "path_equal", "nrc_best", "path_reference"] if m in ordered]
+        important = [m for m in ["path_low", "path_visual", "path_equal", "nrc_best", "path_reference"] if m in ordered]
         if len(important) >= 2:
             make_comparison(
                 scene_name,
@@ -367,6 +368,13 @@ def render_suite(suite, run_root, timeout):
                 ["path_equal", "nrc_best", "path_reference"],
                 [png_by_scene[scene_name][m] for m in ["path_equal", "nrc_best", "path_reference"]],
                 run_root / "comparisons" / f"{scene_name}_triple.png",
+            )
+        if {"path_visual", "nrc_best", "path_reference"}.issubset(png_by_scene[scene_name]):
+            make_comparison(
+                scene_name,
+                ["path_visual", "nrc_best", "path_reference"],
+                [png_by_scene[scene_name][m] for m in ["path_visual", "nrc_best", "path_reference"]],
+                run_root / "comparisons" / f"{scene_name}_visual_triple.png",
             )
     return rows
 

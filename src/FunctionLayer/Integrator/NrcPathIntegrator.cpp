@@ -479,6 +479,11 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
     auto itsOpt = scene->intersect(ray);
 
     while (true) {
+        if (collectTrainingSamples &&
+            collectedTrainingSamples.load() >= settings.maxTrainingSamples) {
+            break;
+        }
+
         if (nBounces == 0) {
             if (!itsOpt.has_value()) {
                 PathIntegratorLocalRecord evalLightRecord = evalEnvLights(scene, ray);
@@ -556,6 +561,9 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
             context.bounce = nBounces;
             context.scene = scene;
 
+            const bool canCollectTrainingSample =
+                collectTrainingSamples &&
+                collectedTrainingSamples.load() < settings.maxTrainingSamples;
             Spectrum targetRadiance(0.0);
             bool hasTargetRadiance = false;
             auto traceTargetRadiance = [&]() {
@@ -588,7 +596,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                 }
             };
 
-            if (collectTrainingSamples) {
+            if (canCollectTrainingSample) {
                 traceTargetRadiance();
             }
 
@@ -601,7 +609,7 @@ Spectrum NrcPathIntegrator::LiInternal(const Ray &initialRay,
                         1.0e-4,
                         0.2126 * throughput[0] + 0.7152 * throughput[1] + 0.0722 * throughput[2]);
                 }
-                if (collectTrainingSamples) {
+                if (canCollectTrainingSample) {
                     radianceCache->enqueueTrainingSamples({trainingSample});
                     collectedTrainingSamples.fetch_add(1);
                     stats.addTrainingSample();
